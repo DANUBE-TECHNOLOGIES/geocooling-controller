@@ -13,6 +13,7 @@ def utc_now() -> datetime:
 
 
 from app.geocooling.capabilities import GeoCoolingCapabilities
+from app.geocooling.decision_context import GeoCoolingDecisionContext
 @dataclass(frozen=True, slots=True)
 class BrainDecision:
     decision: str
@@ -221,9 +222,20 @@ class GeoCoolingBrain:
             if temperature is not None:
                 prediction_by_horizon[horizon] = temperature
 
-        predicted_1h = prediction_by_horizon.get(60)
-        predicted_3h = prediction_by_horizon.get(180)
-        predicted_6h = prediction_by_horizon.get(360)
+        context = GeoCoolingDecisionContext.build(
+            state=state,
+            latest=latest,
+            thermal=thermal,
+            safety=safety,
+            device=device,
+            anti_short_cycle=anti_short_cycle,
+            prediction_by_horizon=prediction_by_horizon,
+            number_parser=self._number,
+        )
+
+        predicted_1h = context.predicted_temperature_1h_c
+        predicted_3h = context.predicted_temperature_3h_c
+        predicted_6h = context.predicted_temperature_6h_c
 
         capabilities = GeoCoolingCapabilities.from_latest(
             latest,
@@ -239,9 +251,9 @@ class GeoCoolingBrain:
         cooling_score, cooling_reasons = self._cooling_score(thermal)
         risk_score, risk_reasons = self._risk_score(safety, device, thermal)
 
-        running = state == "RUNNING"
-        remaining_off = int(anti_short_cycle.get("remaining_minimum_off_seconds") or 0)
-        remaining_on = int(anti_short_cycle.get("remaining_minimum_on_seconds") or 0)
+        running = context.running
+        remaining_off = context.remaining_minimum_off_seconds
+        remaining_on = context.remaining_minimum_on_seconds
 
         total_score = self._clamp(
             comfort_score * 0.60 + cooling_score * 0.40 - risk_score * 0.80,
@@ -250,16 +262,16 @@ class GeoCoolingBrain:
         )
         reasons = comfort_reasons + cooling_reasons + risk_reasons
 
-        if risk_score >= 80 or not safety.get("safe", False) or not device.get("ready", False):
+        if risk_score >= 80 or context.blocked_by_infrastructure:
             decision = "BLOCKED"
             confidence = max(90, risk_score)
-        elif not thermal.get("available", False):
+        elif not context.thermal_available:
             decision = "WAIT"
             confidence = 100
             reasons.append("Aucune mesure thermique exploitable")
         elif running:
-            indoor = self._number(latest.get("indoor_temperature_c"))
-            power = self._number(thermal.get("cooling_power_kw"))
+            indoor = context.indoor_temperature_c
+            power = context.cooling_power_kw
             if remaining_on > 0:
                 decision = "MAINTAIN"
                 confidence = 95
@@ -277,7 +289,7 @@ class GeoCoolingBrain:
                 decision = "MAINTAIN"
                 confidence = self._clamp(55 + comfort_score * 0.35 + cooling_score * 0.10)
         else:
-            indoor = self._number(latest.get("indoor_temperature_c"))
+            indoor = context.indoor_temperature_c
             if remaining_off > 0:
                 decision = "WAIT"
                 confidence = 95
