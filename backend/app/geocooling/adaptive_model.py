@@ -541,6 +541,194 @@ class AdaptiveThermalModel:
                 reason=reason,
             )
 
+    def export_state(self) -> dict[str, Any]:
+        """
+        Exporte l'état interne nécessaire à la reprise
+        de l'apprentissage après un redémarrage.
+
+        Le format est volontairement versionné afin de permettre
+        de futures migrations sans perdre le modèle appris.
+        """
+
+        with self._lock:
+            return {
+                "schema_version": 1,
+                "passive_exchange_rate_per_hour":
+                    self._passive_exchange_rate,
+                "natural_temperature_rate_c_per_hour":
+                    self._natural_temperature_rate,
+                "active_cooling_rate_c_per_hour":
+                    self._active_cooling_rate,
+                "house_thermal_capacity_kwh_per_c":
+                    self._thermal_capacity,
+                "passive_sample_count":
+                    self._passive_samples,
+                "active_sample_count":
+                    self._active_samples,
+                "rejected_sample_count":
+                    self._rejected_samples,
+                "last_observation_at": (
+                    self._last_observation_at.isoformat()
+                    if self._last_observation_at
+                    else None
+                ),
+                "exported_at": utc_now().isoformat(),
+            }
+
+    def restore_state(
+        self,
+        state: dict[str, Any] | None,
+    ) -> bool:
+        """
+        Restaure un modèle précédemment exporté.
+
+        Les valeurs invalides ou incompatibles sont refusées sans
+        modifier le modèle courant.
+        """
+
+        if not isinstance(state, dict):
+            return False
+
+        try:
+            schema_version = int(
+                state.get("schema_version", 0)
+            )
+        except (TypeError, ValueError):
+            return False
+
+        if schema_version != 1:
+            return False
+
+        passive_exchange = self._finite(
+            state.get(
+                "passive_exchange_rate_per_hour"
+            )
+        )
+        natural_rate = self._finite(
+            state.get(
+                "natural_temperature_rate_c_per_hour"
+            )
+        )
+        active_rate = self._finite(
+            state.get(
+                "active_cooling_rate_c_per_hour"
+            )
+        )
+        capacity = self._finite(
+            state.get(
+                "house_thermal_capacity_kwh_per_c"
+            )
+        )
+
+        try:
+            passive_samples = max(
+                0,
+                int(
+                    state.get(
+                        "passive_sample_count",
+                        0,
+                    )
+                ),
+            )
+            active_samples = max(
+                0,
+                int(
+                    state.get(
+                        "active_sample_count",
+                        0,
+                    )
+                ),
+            )
+            rejected_samples = max(
+                0,
+                int(
+                    state.get(
+                        "rejected_sample_count",
+                        0,
+                    )
+                ),
+            )
+        except (TypeError, ValueError):
+            return False
+
+        if (
+            passive_exchange is not None
+            and not 0.0 <= passive_exchange <= 1.0
+        ):
+            return False
+
+        if (
+            natural_rate is not None
+            and abs(natural_rate) > 5.0
+        ):
+            return False
+
+        if (
+            active_rate is not None
+            and not 0.0 <= active_rate <= 5.0
+        ):
+            return False
+
+        if (
+            capacity is not None
+            and not 0.5 <= capacity <= 250.0
+        ):
+            return False
+
+        last_observation_at = None
+        raw_last_observation = state.get(
+            "last_observation_at"
+        )
+
+        if raw_last_observation:
+            try:
+                last_observation_at = (
+                    datetime.fromisoformat(
+                        str(
+                            raw_last_observation
+                        ).replace(
+                            "Z",
+                            "+00:00",
+                        )
+                    )
+                )
+
+                if last_observation_at.tzinfo is None:
+                    last_observation_at = (
+                        last_observation_at.replace(
+                            tzinfo=timezone.utc
+                        )
+                    )
+
+                last_observation_at = (
+                    last_observation_at.astimezone(
+                        timezone.utc
+                    )
+                )
+            except (TypeError, ValueError):
+                return False
+
+        with self._lock:
+            self._passive_exchange_rate = (
+                passive_exchange
+            )
+            self._natural_temperature_rate = (
+                natural_rate
+            )
+            self._active_cooling_rate = active_rate
+            self._thermal_capacity = capacity
+
+            self._passive_samples = passive_samples
+            self._active_samples = active_samples
+            self._rejected_samples = (
+                rejected_samples
+            )
+            self._last_observation_at = (
+                last_observation_at
+            )
+
+        return True
+
     def status(self) -> dict[str, Any]:
         payload = self.estimate().as_dict()
 

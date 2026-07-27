@@ -257,3 +257,112 @@ def test_predictor_falls_back_to_defaults():
 
     assert trend == expected
     assert reasons
+
+
+def test_export_and_restore_state():
+    source = AdaptiveThermalModel()
+    source.minimum_observation_seconds = 60
+
+    passive_points = [
+        snapshot(
+            minutes=0,
+            indoor=24.0,
+            outdoor=30.0,
+            running=False,
+        ),
+        snapshot(
+            minutes=10,
+            indoor=24.1,
+            outdoor=30.0,
+            running=False,
+        ),
+        snapshot(
+            minutes=20,
+            indoor=24.2,
+            outdoor=30.0,
+            running=False,
+        ),
+    ]
+
+    for previous, current in zip(
+        passive_points,
+        passive_points[1:],
+    ):
+        source.observe(
+            previous=previous,
+            current=current,
+            cooling_power_kw=None,
+        )
+
+    active_previous = snapshot(
+        minutes=30,
+        indoor=25.0,
+        outdoor=30.0,
+        running=True,
+    )
+    active_current = snapshot(
+        minutes=40,
+        indoor=24.8,
+        outdoor=30.0,
+        running=True,
+    )
+
+    source.observe(
+        previous=active_previous,
+        current=active_current,
+        cooling_power_kw=4.0,
+    )
+
+    exported = source.export_state()
+
+    restored = AdaptiveThermalModel()
+
+    assert restored.restore_state(exported)
+
+    original_estimate = source.estimate()
+    restored_estimate = restored.estimate()
+
+    assert (
+        restored_estimate.passive_sample_count
+        == original_estimate.passive_sample_count
+    )
+    assert (
+        restored_estimate.active_sample_count
+        == original_estimate.active_sample_count
+    )
+    assert (
+        restored_estimate.passive_exchange_rate_per_hour
+        == original_estimate.passive_exchange_rate_per_hour
+    )
+    assert (
+        restored_estimate.active_cooling_rate_c_per_hour
+        == original_estimate.active_cooling_rate_c_per_hour
+    )
+    assert (
+        restored_estimate.house_thermal_capacity_kwh_per_c
+        == original_estimate.house_thermal_capacity_kwh_per_c
+    )
+
+
+def test_restore_rejects_unknown_schema():
+    model = AdaptiveThermalModel()
+
+    assert not model.restore_state(
+        {
+            "schema_version": 999,
+            "passive_sample_count": 10,
+        }
+    )
+
+
+def test_restore_rejects_invalid_capacity():
+    model = AdaptiveThermalModel()
+
+    assert not model.restore_state(
+        {
+            "schema_version": 1,
+            "house_thermal_capacity_kwh_per_c": -10,
+            "passive_sample_count": 1,
+            "active_sample_count": 1,
+        }
+    )

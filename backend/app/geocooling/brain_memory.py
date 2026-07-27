@@ -164,6 +164,163 @@ class BrainMemory:
                 )
             )
 
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS
+                        geocooling_adaptive_model (
+                            model_key TEXT PRIMARY KEY,
+                            schema_version INTEGER NOT NULL,
+                            state JSONB NOT NULL
+                                DEFAULT '{}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL
+                                DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL
+                                DEFAULT NOW()
+                        )
+                    """
+                )
+            )
+
+            connection.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS
+                        idx_geocooling_adaptive_model_updated_at
+                    ON geocooling_adaptive_model (
+                        updated_at DESC
+                    )
+                    """
+                )
+            )
+
+    def save_adaptive_model_state(
+        self,
+        state: dict[str, Any],
+        *,
+        model_key: str = "building-default",
+    ) -> None:
+        """
+        Sauvegarde l'état courant du modèle thermique adaptatif.
+
+        Une seule ligne est conservée par bâtiment/model_key.
+        """
+
+        if not isinstance(state, dict):
+            raise TypeError(
+                "L'état du modèle adaptatif doit être un dictionnaire."
+            )
+
+        schema_version = int(
+            state.get(
+                "schema_version",
+                1,
+            )
+        )
+
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO geocooling_adaptive_model (
+                        model_key,
+                        schema_version,
+                        state,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :model_key,
+                        :schema_version,
+                        CAST(:state AS JSONB),
+                        NOW(),
+                        NOW()
+                    )
+                    ON CONFLICT (model_key)
+                    DO UPDATE SET
+                        schema_version =
+                            EXCLUDED.schema_version,
+                        state = EXCLUDED.state,
+                        updated_at = NOW()
+                    """
+                ),
+                {
+                    "model_key": str(model_key),
+                    "schema_version":
+                        schema_version,
+                    "state": _json_value(state),
+                },
+            )
+
+    def load_adaptive_model_state(
+        self,
+        *,
+        model_key: str = "building-default",
+    ) -> dict[str, Any] | None:
+        """
+        Charge le dernier état persistant du modèle adaptatif.
+        """
+
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT
+                        schema_version,
+                        state,
+                        created_at,
+                        updated_at
+                    FROM geocooling_adaptive_model
+                    WHERE model_key = :model_key
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "model_key": str(model_key),
+                },
+            ).mappings().first()
+
+        if row is None:
+            return None
+
+        raw_state = row.get("state")
+
+        if isinstance(raw_state, str):
+            try:
+                state = json.loads(raw_state)
+            except json.JSONDecodeError:
+                return None
+        elif isinstance(raw_state, dict):
+            state = dict(raw_state)
+        else:
+            return None
+
+        state.setdefault(
+            "schema_version",
+            int(
+                row.get(
+                    "schema_version",
+                    1,
+                )
+            ),
+        )
+
+        state["_persistence"] = {
+            "model_key": str(model_key),
+            "created_at": (
+                row["created_at"].isoformat()
+                if row.get("created_at")
+                else None
+            ),
+            "updated_at": (
+                row["updated_at"].isoformat()
+                if row.get("updated_at")
+                else None
+            ),
+        }
+
+        return state
+
     def record_decision(
         self,
         *,

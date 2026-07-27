@@ -102,6 +102,26 @@ class GeoCoolingController:
         # Historien PostgreSQL des décisions, commandes et événements.
         self.brain_memory = BrainMemory(self.engine)
 
+        self.adaptive_model_key = os.getenv(
+            "GEOCOOLING_ADAPTIVE_MODEL_KEY",
+            "building-default",
+        ).strip() or "building-default"
+
+        self.adaptive_persist_interval_seconds = max(
+            30,
+            int(
+                os.getenv(
+                    "GEOCOOLING_ADAPTIVE_PERSIST_INTERVAL_SECONDS",
+                    "300",
+                )
+            ),
+        )
+
+        self.adaptive_model_last_saved_at: datetime | None = None
+        self.adaptive_model_last_loaded_at: datetime | None = None
+        self.adaptive_model_last_error: str | None = None
+        self.adaptive_model_restored = False
+
         self.autopilot_enabled = (
             os.getenv(
                 "GEOCOOLING_AUTOPILOT_ENABLED",
@@ -191,6 +211,7 @@ class GeoCoolingController:
 
         self.initialize_database()
         self.brain_memory.initialize()
+        self._restore_adaptive_model()
         self._restore_safe_state()
         self._persist_snapshot(
             event_type="geocooling.controller_initialized",
@@ -715,18 +736,168 @@ class GeoCoolingController:
         )
         return decision.as_dict()
 
+    def _restore_adaptive_model(self) -> None:
+        """
+        Recharge le modèle thermique appris lors du dernier
+        fonctionnement du contrôleur.
+        """
+
+        try:
+            state = (
+                self.brain_memory
+                .load_adaptive_model_state(
+                    model_key=self.adaptive_model_key,
+                )
+            )
+
+            if state is None:
+                self.adaptive_model_restored = False
+                self.adaptive_model_last_error = None
+                return
+
+            restored = (
+                self.thermal_engine
+                .adaptive_model
+                .restore_state(state)
+            )
+
+            self.adaptive_model_restored = restored
+
+            if restored:
+                self.adaptive_model_last_loaded_at = (
+                    utc_now()
+                )
+                self.adaptive_model_last_error = None
+
+                logger.info(
+                    "Modèle thermique adaptatif restauré : %s",
+                    self.adaptive_model_key,
+                )
+            else:
+                self.adaptive_model_last_error = (
+                    "État persistant incompatible ou invalide"
+                )
+
+                logger.warning(
+                    "Modèle thermique adaptatif non restauré : %s",
+                    self.adaptive_model_last_error,
+                )
+
+        except Exception as exc:
+            self.adaptive_model_restored = False
+            self.adaptive_model_last_error = str(exc)
+
+            logger.exception(
+                "Échec de restauration du modèle thermique adaptatif"
+            )
+
+    def _persist_adaptive_model(
+        self,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """
+        Sauvegarde périodiquement le modèle thermique appris.
+
+        Retourne True lorsqu'une écriture PostgreSQL a été réalisée.
+        """
+
+        now = utc_now()
+
+        if (
+            not force
+            and self.adaptive_model_last_saved_at
+            is not None
+        ):
+            elapsed = (
+                now
+                - self.adaptive_model_last_saved_at
+            ).total_seconds()
+
+            if (
+                elapsed
+                < self.adaptive_persist_interval_seconds
+            ):
+                return False
+
+        try:
+            state = (
+                self.thermal_engine
+                .adaptive_model
+                .export_state()
+            )
+
+            self.brain_memory.save_adaptive_model_state(
+                state,
+                model_key=self.adaptive_model_key,
+            )
+
+            self.adaptive_model_last_saved_at = now
+            self.adaptive_model_last_error = None
+
+            return True
+
+        except Exception as exc:
+            self.adaptive_model_last_error = str(exc)
+
+            logger.exception(
+                "Échec de sauvegarde du modèle thermique adaptatif"
+            )
+
+            return False
+
+    def adaptive_model_status(self) -> dict[str, Any]:
+        """
+        Expose le modèle appris et l'état de sa persistance.
+        """
+
+        status = (
+            self.thermal_engine
+            .adaptive_model
+            .status()
+        )
+
+        status["persistence"] = {
+            "model_key": self.adaptive_model_key,
+            "restored_at_startup":
+                self.adaptive_model_restored,
+            "last_loaded_at": (
+                self.adaptive_model_last_loaded_at.isoformat()
+                if self.adaptive_model_last_loaded_at
+                else None
+            ),
+            "last_saved_at": (
+                self.adaptive_model_last_saved_at.isoformat()
+                if self.adaptive_model_last_saved_at
+                else None
+            ),
+            "persist_interval_seconds":
+                self.adaptive_persist_interval_seconds,
+            "last_error":
+                self.adaptive_model_last_error,
+        }
+
+        return status
+
     def ingest_thermal_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
         metrics = self.thermal_engine.ingest(payload)
+
+        model_saved = self._persist_adaptive_model()
+
         return {
             "accepted": True,
             "message": "Mesure thermique enregistrée.",
             "thermal": metrics,
             "safety": self._thermal_safety(),
+            "adaptive_model_persisted": model_saved,
         }
 
     def thermal_status(self) -> dict[str, Any]:
         metrics = self.thermal_engine.metrics()
         metrics["safety"] = self._thermal_safety()
+        metrics["adaptive_model"] = (
+            self.adaptive_model_status()
+        )
         return metrics
 
     def thermal_history(self, limit: int = 200) -> list[dict[str, Any]]:
