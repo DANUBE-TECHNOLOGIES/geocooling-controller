@@ -1,0 +1,111 @@
+version: "3.9"
+
+services:
+
+  sbc-postgres:
+    image: postgres:17
+    container_name: sbc-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: sbc
+      POSTGRES_USER: sbc
+      POSTGRES_PASSWORD: change_me
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    ports:
+      - "5432:5432"
+
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U sbc"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - sbc
+
+
+  sbc-adminer:
+    image: adminer:latest
+    container_name: sbc-adminer
+    restart: unless-stopped
+
+    ports:
+      - "8081:8080"
+
+    depends_on:
+      - sbc-postgres
+
+    networks:
+      - sbc
+
+
+  sbc-ollama:
+    image: ollama/ollama:latest
+    container_name: sbc-ollama
+    restart: unless-stopped
+
+    volumes:
+      - ollama:/root/.ollama
+
+    ports:
+      - "11434:11434"
+
+    networks:
+      - sbc
+
+
+  sbc-backend:
+    image: python:3.13-slim
+
+    container_name: sbc-backend
+
+    restart: unless-stopped
+
+    command: >
+      sh -c "
+      pip install fastapi uvicorn &&
+      python -c '
+from fastapi import FastAPI
+import uvicorn
+
+app=FastAPI(title=\"Smart Building Controller\")
+
+@app.get(\"/\")
+def root():
+    return {
+        \"project\":\"Smart Building Controller\",
+        \"version\":\"0.1.0\",
+        \"status\":\"running\"
+    }
+
+@app.get(\"/health\")
+def health():
+    return {
+        \"status\":\"healthy\"
+    }
+
+uvicorn.run(app,host=\"0.0.0.0\",port=8000)
+'
+      "
+
+    ports:
+      - "8000:8000"
+
+    networks:
+      - sbc
+
+
+networks:
+
+  sbc:
+
+
+volumes:
+
+  postgres_data:
+
+  ollama:

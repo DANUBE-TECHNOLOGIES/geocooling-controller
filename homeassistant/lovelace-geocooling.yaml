@@ -1,0 +1,40 @@
+title: GeoCooling
+views:
+  - title: GeoCooling
+    path: geocooling
+    icon: mdi:snowflake-thermometer
+    cards:
+      - type: entities
+        title: État GeoCooling
+        entities:
+          - sensor.geocooling_controller
+          - sensor.geocooling_brain_decision
+          - sensor.geocooling_brain_confidence
+          - sensor.geocooling_data_quality
+          - binary_sensor.geocooling_pump
+          - binary_sensor.geocooling_valve
+          - binary_sensor.geocooling_safety
+      - type: glance
+        title: Températures
+        entities:
+          - sensor.geocooling_temperature_interieure
+          - sensor.geocooling_humidite_interieure
+          - sensor.geocooling_marge_condensation
+          - sensor.geocooling_prevision_1h
+          - sensor.geocooling_prevision_3h
+          - sensor.geocooling_prevision_6h
+      - type: history-graph
+        title: Évolution thermique
+        hours_to_show: 24
+        entities:
+          - sensor.geocooling_temperature_interieure
+          - sensor.geocooling_prevision_1h
+          - sensor.geocooling_prevision_3h
+          - sensor.geocooling_prevision_6h
+      - type: markdown
+        title: Explication du Brain
+        content: >-
+          **Mode :** {{ state_attr('sensor.geocooling_controller', 'brain_operating_mode') }}  
+          **Décision :** {{ state_attr('sensor.geocooling_controller', 'brain_decision') }}  
+          **Raison :** {{ state_attr('sensor.geocooling_controller', 'brain_reason') }}  
+          **Durée recommandée :** {{ state_attr('sensor.geocooling_controller', 'recommended_runtime_minutes') }} min

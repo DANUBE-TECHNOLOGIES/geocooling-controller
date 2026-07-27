@@ -1,0 +1,1717 @@
+import json
+import logging
+import math
+import os
+import threading
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Any
+
+import paho.mqtt.client as mqtt
+from fastapi import FastAPI, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from sqlalchemy import create_engine, text
+from app.intelligence_service import IntelligenceService
+from app.weather_service import WeatherService
+from app.events.api import (
+    configure_events_router,
+    router as events_router,
+)
+from app.events.bus import EventBus
+from app.devices.api import (
+    configure_devices_router,
+    router as devices_router,
+)
+from app.devices.manager import DeviceManager
+from app.building.api import (
+    configure_building_router,
+    router as building_router,
+)
+from app.building.service import BuildingStateService
+
+APP_VERSION = "0.6.2c"
+DATABASE_URL = os.environ["DATABASE_URL"]
+
+MQTT_HOST = os.getenv("MQTT_HOST", "host.docker.internal")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
+MQTT_TOPICS = [
+    topic.strip()
+    for topic in os.getenv(
+        "MQTT_TOPICS",
+        "zigbee2mqtt/#,geocooling/#,esphome/#",
+    ).split(",")
+    if topic.strip()
+]
+
+AGGREGATION_INTERVAL_SECONDS = 300
+
+logging.basicConfig(
+    level=getattr(
+        logging,
+        os.getenv("LOG_LEVEL", "INFO").upper(),
+        logging.INFO,
+    ),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
+logger = logging.getLogger("sbc")
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+started_at = time.monotonic()
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def sanitize_text(value: str) -> str:
+    return value.replace("\x00", "")
+
+
+def initialize_database() -> None:
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS telemetry_raw (
+            id BIGSERIAL PRIMARY KEY,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            topic TEXT NOT NULL,
+            payload_text TEXT NOT NULL,
+            payload_json JSONB,
+            qos INTEGER NOT NULL DEFAULT 0,
+            retained BOOLEAN NOT NULL DEFAULT FALSE
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_telemetry_raw_received_at
+        ON telemetry_raw (received_at DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_telemetry_raw_topic
+        ON telemetry_raw (topic)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS sensor_measurements (
+            id BIGSERIAL PRIMARY KEY,
+            measured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            source TEXT NOT NULL,
+            sensor_name TEXT NOT NULL,
+            metric TEXT NOT NULL,
+            value DOUBLE PRECISION NOT NULL,
+            unit TEXT,
+            quality TEXT NOT NULL DEFAULT 'good',
+            mqtt_topic TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_sensor_measurements_lookup
+        ON sensor_measurements (
+            sensor_name,
+            metric,
+            measured_at DESC
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_sensor_measurements_time
+        ON sensor_measurements (measured_at DESC)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS thermal_snapshots (
+            id BIGSERIAL PRIMARY KEY,
+            calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            salon_temperature DOUBLE PRECISION,
+            etage_temperature DOUBLE PRECISION,
+            indoor_temperature DOUBLE PRECISION,
+            indoor_humidity DOUBLE PRECISION,
+            dew_point DOUBLE PRECISION,
+            slope_1h DOUBLE PRECISION,
+            slope_3h DOUBLE PRECISION,
+            outdoor_temperature DOUBLE PRECISION,
+            indoor_outdoor_delta DOUBLE PRECISION,
+            data_quality TEXT NOT NULL,
+            learning_ready BOOLEAN NOT NULL DEFAULT FALSE
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_thermal_snapshots_time
+        ON thermal_snapshots (calculated_at DESC)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS learning_parameters (
+            parameter_name TEXT PRIMARY KEY,
+            parameter_value DOUBLE PRECISION,
+            unit TEXT,
+            confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+            sample_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            details JSONB NOT NULL DEFAULT '{}'::jsonb
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS system_events (
+            id BIGSERIAL PRIMARY KEY,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            event_type TEXT NOT NULL,
+            details JSONB NOT NULL DEFAULT '{}'::jsonb
+        )
+        """,
+    ]
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def database_is_available() -> bool:
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+def topic_is_useful(topic: str) -> bool:
+    ignored_fragments = (
+        "/bridge/definitions",
+        "/bridge/info",
+        "/bridge/devices",
+        "/bridge/converters",
+        "/bridge/extensions",
+        "/bridge/groups",
+        "/bridge/request/",
+        "/bridge/response/",
+        "/availability",
+    )
+    return not any(fragment in topic for fragment in ignored_fragments)
+
+
+def sensor_name_from_topic(topic: str) -> str:
+    parts = topic.split("/")
+
+    if topic.startswith("zigbee2mqtt/") and len(parts) >= 2:
+        return parts[1]
+
+    if len(parts) >= 2:
+        return parts[-1]
+
+    return topic.replace("/", "_")
+
+
+def infer_zone(sensor_name: str) -> str:
+    name = sensor_name.lower()
+
+    if any(word in name for word in ("salon", "rdc", "sejour")):
+        return "indoor_salon"
+
+    if any(word in name for word in ("etage", "chambre", "haut")):
+        return "indoor_etage"
+
+    if any(
+        word in name
+        for word in (
+            "exterieur",
+            "extérieur",
+            "outside",
+            "outdoor",
+            "meteo",
+        )
+    ):
+        return "outdoor"
+
+    return "unknown"
+
+
+def metric_unit(metric: str) -> str | None:
+    units = {
+        "temperature": "°C",
+        "humidity": "%",
+        "battery": "%",
+        "linkquality": "lqi",
+        "flow": "l/min",
+        "pressure": "bar",
+        "power": "W",
+        "energy": "kWh",
+    }
+    return units.get(metric)
+
+
+def numeric_measurements(payload: Any) -> dict[str, float]:
+    if not isinstance(payload, dict):
+        return {}
+
+    accepted = {
+        "temperature",
+        "humidity",
+        "battery",
+        "linkquality",
+        "flow",
+        "pressure",
+        "power",
+        "energy",
+    }
+
+    result: dict[str, float] = {}
+
+    for key, value in payload.items():
+        if (
+            key in accepted
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+        ):
+            result[key] = float(value)
+
+    return result
+
+
+def calculate_dew_point(
+    temperature: float | None,
+    humidity: float | None,
+) -> float | None:
+    if temperature is None or humidity is None:
+        return None
+
+    if humidity <= 0 or humidity > 100:
+        return None
+
+    a = 17.62
+    b = 243.12
+
+    gamma = (
+        math.log(humidity / 100.0)
+        + (a * temperature) / (b + temperature)
+    )
+
+    return round((b * gamma) / (a - gamma), 3)
+
+
+def latest_metric(
+    connection: Any,
+    sensor_name: str,
+    metric: str,
+    maximum_age_minutes: int = 180,
+) -> float | None:
+    return connection.execute(
+        text(
+            """
+            SELECT value
+            FROM sensor_measurements
+            WHERE sensor_name = :sensor_name
+              AND metric = :metric
+              AND measured_at >= NOW()
+                  - (:maximum_age_minutes * INTERVAL '1 minute')
+            ORDER BY measured_at DESC
+            LIMIT 1
+            """
+        ),
+        {
+            "sensor_name": sensor_name,
+            "metric": metric,
+            "maximum_age_minutes": maximum_age_minutes,
+        },
+    ).scalar_one_or_none()
+
+
+def average_metric_for_zone(
+    connection: Any,
+    zone: str,
+    metric: str,
+    maximum_age_minutes: int = 180,
+) -> float | None:
+    rows = connection.execute(
+        text(
+            """
+            WITH latest_per_sensor AS (
+                SELECT DISTINCT ON (sensor_name)
+                    sensor_name,
+                    value
+                FROM sensor_measurements
+                WHERE metric = :metric
+                  AND measured_at >= NOW()
+                      - (:maximum_age_minutes * INTERVAL '1 minute')
+                ORDER BY sensor_name, measured_at DESC
+            )
+            SELECT AVG(value)
+            FROM latest_per_sensor
+            WHERE
+                CASE
+                    WHEN :zone = 'indoor'
+                    THEN sensor_name IN (
+                        'gc_temp_salon',
+                        'gc_temp_etage'
+                    )
+                    WHEN :zone = 'outdoor'
+                    THEN LOWER(sensor_name) LIKE ANY (
+                        ARRAY[
+                            '%exterieur%',
+                            '%extérieur%',
+                            '%outside%',
+                            '%outdoor%',
+                            '%meteo%'
+                        ]
+                    )
+                    ELSE FALSE
+                END
+            """
+        ),
+        {
+            "zone": zone,
+            "metric": metric,
+            "maximum_age_minutes": maximum_age_minutes,
+        },
+    ).scalar_one_or_none()
+
+    return float(rows) if rows is not None else None
+
+
+def historical_indoor_average(
+    connection: Any,
+    hours_ago: int,
+) -> float | None:
+    value = connection.execute(
+        text(
+            """
+            SELECT indoor_temperature
+            FROM thermal_snapshots
+            WHERE calculated_at <= NOW()
+                - (:hours_ago * INTERVAL '1 hour')
+              AND indoor_temperature IS NOT NULL
+            ORDER BY calculated_at DESC
+            LIMIT 1
+            """
+        ),
+        {"hours_ago": hours_ago},
+    ).scalar_one_or_none()
+
+    return float(value) if value is not None else None
+
+
+def calculate_slope(
+    current: float | None,
+    previous: float | None,
+    hours: float,
+) -> float | None:
+    if current is None or previous is None or hours <= 0:
+        return None
+
+    return round((current - previous) / hours, 4)
+
+
+def update_learning_parameters(
+    connection: Any,
+    indoor_temperature: float | None,
+    outdoor_temperature: float | None,
+    slope_3h: float | None,
+) -> None:
+    if (
+        indoor_temperature is None
+        or outdoor_temperature is None
+        or slope_3h is None
+    ):
+        return
+
+    delta = outdoor_temperature - indoor_temperature
+
+    if abs(delta) < 1.0:
+        return
+
+    response_ratio = slope_3h / delta
+
+    connection.execute(
+        text(
+            """
+            INSERT INTO learning_parameters (
+                parameter_name,
+                parameter_value,
+                unit,
+                confidence,
+                sample_count,
+                updated_at,
+                details
+            )
+            VALUES (
+                'passive_thermal_response',
+                :value,
+                '°C/h par °C écart',
+                0.05,
+                1,
+                NOW(),
+                CAST(:details AS JSONB)
+            )
+            ON CONFLICT (parameter_name)
+            DO UPDATE SET
+                parameter_value = (
+                    learning_parameters.parameter_value
+                    * learning_parameters.sample_count
+                    + EXCLUDED.parameter_value
+                ) / (
+                    learning_parameters.sample_count + 1
+                ),
+                sample_count =
+                    learning_parameters.sample_count + 1,
+                confidence = LEAST(
+                    1.0,
+                    (
+                        learning_parameters.sample_count + 1
+                    ) / 100.0
+                ),
+                updated_at = NOW(),
+                details = EXCLUDED.details
+            """
+        ),
+        {
+            "value": response_ratio,
+            "details": json.dumps(
+                {
+                    "indoor_temperature": indoor_temperature,
+                    "outdoor_temperature": outdoor_temperature,
+                    "slope_3h": slope_3h,
+                    "indoor_outdoor_delta": delta,
+                }
+            ),
+        },
+    )
+
+
+def create_thermal_snapshot() -> None:
+    with engine.begin() as connection:
+        salon_temperature = latest_metric(
+            connection,
+            "gc_temp_salon",
+            "temperature",
+        )
+
+        etage_temperature = latest_metric(
+            connection,
+            "gc_temp_etage",
+            "temperature",
+        )
+
+        indoor_values = [
+            value
+            for value in (
+                salon_temperature,
+                etage_temperature,
+            )
+            if value is not None
+        ]
+
+        indoor_temperature = (
+            sum(indoor_values) / len(indoor_values)
+            if indoor_values
+            else None
+        )
+
+        indoor_humidity = average_metric_for_zone(
+            connection,
+            "indoor",
+            "humidity",
+        )
+
+        outdoor_temperature = average_metric_for_zone(
+            connection,
+            "outdoor",
+            "temperature",
+        )
+
+        previous_1h = historical_indoor_average(
+            connection,
+            1,
+        )
+        previous_3h = historical_indoor_average(
+            connection,
+            3,
+        )
+
+        slope_1h = calculate_slope(
+            indoor_temperature,
+            previous_1h,
+            1,
+        )
+        slope_3h = calculate_slope(
+            indoor_temperature,
+            previous_3h,
+            3,
+        )
+
+        dew_point = calculate_dew_point(
+            indoor_temperature,
+            indoor_humidity,
+        )
+
+        indoor_outdoor_delta = (
+            round(
+                indoor_temperature - outdoor_temperature,
+                3,
+            )
+            if (
+                indoor_temperature is not None
+                and outdoor_temperature is not None
+            )
+            else None
+        )
+
+        learning_ready = (
+            indoor_temperature is not None
+            and outdoor_temperature is not None
+            and slope_3h is not None
+        )
+
+        if len(indoor_values) == 2:
+            data_quality = "good"
+        elif len(indoor_values) == 1:
+            data_quality = "partial"
+        else:
+            data_quality = "missing"
+
+        connection.execute(
+            text(
+                """
+                INSERT INTO thermal_snapshots (
+                    salon_temperature,
+                    etage_temperature,
+                    indoor_temperature,
+                    indoor_humidity,
+                    dew_point,
+                    slope_1h,
+                    slope_3h,
+                    outdoor_temperature,
+                    indoor_outdoor_delta,
+                    data_quality,
+                    learning_ready
+                )
+                VALUES (
+                    :salon_temperature,
+                    :etage_temperature,
+                    :indoor_temperature,
+                    :indoor_humidity,
+                    :dew_point,
+                    :slope_1h,
+                    :slope_3h,
+                    :outdoor_temperature,
+                    :indoor_outdoor_delta,
+                    :data_quality,
+                    :learning_ready
+                )
+                """
+            ),
+            {
+                "salon_temperature": salon_temperature,
+                "etage_temperature": etage_temperature,
+                "indoor_temperature": indoor_temperature,
+                "indoor_humidity": indoor_humidity,
+                "dew_point": dew_point,
+                "slope_1h": slope_1h,
+                "slope_3h": slope_3h,
+                "outdoor_temperature": outdoor_temperature,
+                "indoor_outdoor_delta": indoor_outdoor_delta,
+                "data_quality": data_quality,
+                "learning_ready": learning_ready,
+            },
+        )
+
+        update_learning_parameters(
+            connection,
+            indoor_temperature,
+            outdoor_temperature,
+            slope_3h,
+        )
+
+
+class ThermalWorker:
+    def __init__(self) -> None:
+        self.stop_event = threading.Event()
+        self.last_run_at: str | None = None
+        self.last_error: str | None = None
+
+    def start(self) -> None:
+        def worker() -> None:
+            while not self.stop_event.is_set():
+                try:
+                    create_thermal_snapshot()
+                    self.last_run_at = utc_now().isoformat()
+                    self.last_error = None
+                except Exception as exc:
+                    self.last_error = str(exc)
+                    logger.exception(
+                        "Erreur de calcul thermique"
+                    )
+
+                self.stop_event.wait(
+                    AGGREGATION_INTERVAL_SECONDS
+                )
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="thermal-worker",
+        ).start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+
+class MQTTCollector:
+    def __init__(self) -> None:
+        self.connected = False
+        self.last_error: str | None = None
+        self.last_message_at: str | None = None
+        self.message_count = 0
+        self.measurement_count = 0
+        self.stop_event = threading.Event()
+
+        self.client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id="sbc-controller",
+            protocol=mqtt.MQTTv311,
+        )
+
+        if MQTT_USERNAME:
+            self.client.username_pw_set(
+                MQTT_USERNAME,
+                MQTT_PASSWORD,
+            )
+
+        self.client.on_connect = self.on_connect
+        self.client.on_disconnect = self.on_disconnect
+        self.client.on_message = self.on_message
+
+    def on_connect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        flags: Any,
+        reason_code: Any,
+        properties: Any,
+    ) -> None:
+        if reason_code == 0:
+            self.connected = True
+            self.last_error = None
+
+            for topic in MQTT_TOPICS:
+                client.subscribe(topic, qos=0)
+                logger.info(
+                    "Abonnement MQTT : %s",
+                    topic,
+                )
+
+            logger.info(
+                "Connecté à MQTT sur %s:%s",
+                MQTT_HOST,
+                MQTT_PORT,
+            )
+        else:
+            self.connected = False
+            self.last_error = (
+                f"Code MQTT : {reason_code}"
+            )
+
+    def on_disconnect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        disconnect_flags: Any,
+        reason_code: Any,
+        properties: Any,
+    ) -> None:
+        self.connected = False
+
+        if reason_code != 0:
+            self.last_error = (
+                f"Déconnexion MQTT : {reason_code}"
+            )
+
+    def on_message(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        message: mqtt.MQTTMessage,
+    ) -> None:
+        payload_text = sanitize_text(
+            message.payload.decode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+
+        try:
+            payload_json = json.loads(payload_text)
+        except json.JSONDecodeError:
+            payload_json = None
+
+        try:
+            with engine.begin() as connection:
+                if topic_is_useful(message.topic):
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO telemetry_raw (
+                                topic,
+                                payload_text,
+                                payload_json,
+                                qos,
+                                retained
+                            )
+                            VALUES (
+                                :topic,
+                                :payload_text,
+                                CAST(:payload_json AS JSONB),
+                                :qos,
+                                :retained
+                            )
+                            """
+                        ),
+                        {
+                            "topic": message.topic,
+                            "payload_text": payload_text,
+                            "payload_json": (
+                                json.dumps(payload_json)
+                                if payload_json is not None
+                                else None
+                            ),
+                            "qos": message.qos,
+                            "retained": message.retain,
+                        },
+                    )
+
+                measurements = numeric_measurements(
+                    payload_json
+                )
+
+                if measurements:
+                    sensor_name = sensor_name_from_topic(
+                        message.topic
+                    )
+                    source = (
+                        "zigbee2mqtt"
+                        if message.topic.startswith(
+                            "zigbee2mqtt/"
+                        )
+                        else "mqtt"
+                    )
+
+                    for metric, value in measurements.items():
+                        connection.execute(
+                            text(
+                                """
+                                INSERT INTO sensor_measurements (
+                                    source,
+                                    sensor_name,
+                                    metric,
+                                    value,
+                                    unit,
+                                    quality,
+                                    mqtt_topic
+                                )
+                                VALUES (
+                                    :source,
+                                    :sensor_name,
+                                    :metric,
+                                    :value,
+                                    :unit,
+                                    'good',
+                                    :mqtt_topic
+                                )
+                                """
+                            ),
+                            {
+                                "source": source,
+                                "sensor_name": sensor_name,
+                                "metric": metric,
+                                "value": value,
+                                "unit": metric_unit(metric),
+                                "mqtt_topic": message.topic,
+                            },
+                        )
+
+                        self.measurement_count += 1
+
+            self.message_count += 1
+            self.last_message_at = utc_now().isoformat()
+            self.last_error = None
+
+        except Exception as exc:
+            self.last_error = (
+                f"Traitement MQTT : {exc}"
+            )
+            logger.exception(
+                "Erreur de traitement MQTT"
+            )
+
+    def start(self) -> None:
+        def worker() -> None:
+            while not self.stop_event.is_set():
+                try:
+                    self.client.connect(
+                        MQTT_HOST,
+                        MQTT_PORT,
+                        keepalive=60,
+                    )
+                    self.client.loop_forever(
+                        retry_first_connection=True
+                    )
+                except Exception as exc:
+                    self.connected = False
+                    self.last_error = str(exc)
+                    logger.warning(
+                        "MQTT indisponible : %s",
+                        exc,
+                    )
+                    time.sleep(5)
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="mqtt-collector",
+        ).start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+        try:
+            self.client.disconnect()
+        except Exception:
+            pass
+
+
+collector = MQTTCollector()
+thermal_worker = ThermalWorker()
+weather_service = WeatherService(engine)
+intelligence_service = IntelligenceService(engine)
+event_bus = EventBus(engine)
+configure_events_router(event_bus)
+building_state_service = BuildingStateService(engine)
+configure_building_router(building_state_service)
+device_manager = DeviceManager(engine)
+configure_devices_router(device_manager)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    event_bus.start()
+    collector.start()
+    thermal_worker.start()
+    weather_service.start()
+    intelligence_service.start()
+    event_bus.publish(
+        "system.application_started",
+        "application",
+        {"version": APP_VERSION},
+    )
+    building_state_service.start()
+    device_manager.start()
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO system_events (
+                    event_type,
+                    details
+                )
+                VALUES (
+                    'application_started',
+                    CAST(:details AS JSONB)
+                )
+                """
+            ),
+            {
+                "details": json.dumps(
+                    {"version": APP_VERSION}
+                )
+            },
+        )
+
+    yield
+
+    device_manager.stop()
+    building_state_service.stop()
+    event_bus.publish("system.application_stopping", "application", {"version": APP_VERSION})
+    intelligence_service.stop()
+    weather_service.stop()
+    thermal_worker.stop()
+    collector.stop()
+    event_bus.stop()
+
+
+app = FastAPI(
+    title="Smart Building Controller",
+    version=APP_VERSION,
+    lifespan=lifespan,
+)
+
+
+@app.get("/")
+def root() -> dict[str, Any]:
+    return {
+        "project": "Smart Building Controller",
+        "version": APP_VERSION,
+        "status": "running",
+        "documentation": "/docs",
+    }
+
+
+@app.get("/health/live")
+def health_live() -> dict[str, str]:
+    return {"status": "alive"}
+
+
+@app.get("/health")
+def health() -> JSONResponse:
+    database_ok = database_is_available()
+
+    status = (
+        "healthy"
+        if database_ok and collector.connected
+        else "degraded"
+    )
+
+    return JSONResponse(
+        content=jsonable_encoder({
+            "status": status,
+            "version": APP_VERSION,
+            "uptime_seconds": round(
+                time.monotonic() - started_at,
+                1,
+            ),
+            "database": (
+                "connected"
+                if database_ok
+                else "disconnected"
+            ),
+            "mqtt": {
+                "connected": collector.connected,
+                "message_count": collector.message_count,
+                "measurement_count":
+                    collector.measurement_count,
+                "last_message_at":
+                    collector.last_message_at,
+                "last_error":
+                    collector.last_error,
+            },
+            "intelligence": intelligence_service.status(),
+            "building": building_state_service.diagnostics(),
+            "devices": jsonable_encoder(device_manager.status()),
+            "events": event_bus.diagnostics(),
+            "weather": weather_service.status(),
+            "thermal_worker": {
+                "last_run_at":
+                    thermal_worker.last_run_at,
+                "last_error":
+                    thermal_worker.last_error,
+                "interval_seconds":
+                    AGGREGATION_INTERVAL_SECONDS,
+            },
+        }),
+        status_code=(
+            200
+            if status == "healthy"
+            else 503
+        ),
+    )
+
+
+@app.get("/sensors/latest")
+def sensors_latest() -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT DISTINCT ON (
+                    sensor_name,
+                    metric
+                )
+                    sensor_name,
+                    metric,
+                    value,
+                    unit,
+                    quality,
+                    measured_at,
+                    mqtt_topic
+                FROM sensor_measurements
+                ORDER BY
+                    sensor_name,
+                    metric,
+                    measured_at DESC
+                """
+            )
+        ).mappings().all()
+
+    return [dict(row) for row in rows]
+
+
+@app.get("/thermal/status")
+def thermal_status() -> dict[str, Any]:
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT *
+                FROM thermal_snapshots
+                ORDER BY calculated_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+    return dict(row) if row else {
+        "status": "waiting_for_first_snapshot"
+    }
+
+
+@app.get("/learning/status")
+def learning_status() -> dict[str, Any]:
+    with engine.connect() as connection:
+        parameters = connection.execute(
+            text(
+                """
+                SELECT
+                    parameter_name,
+                    parameter_value,
+                    unit,
+                    confidence,
+                    sample_count,
+                    updated_at,
+                    details
+                FROM learning_parameters
+                ORDER BY parameter_name
+                """
+            )
+        ).mappings().all()
+
+        snapshot_count = connection.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM thermal_snapshots
+                """
+            )
+        ).scalar_one()
+
+        measurement_count = connection.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM sensor_measurements
+                """
+            )
+        ).scalar_one()
+
+        latest = connection.execute(
+            text(
+                """
+                SELECT *
+                FROM thermal_snapshots
+                ORDER BY calculated_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+    return {
+        "measurement_count": measurement_count,
+        "thermal_snapshot_count": snapshot_count,
+        "learning_ready": (
+            bool(latest["learning_ready"])
+            if latest
+            else False
+        ),
+        "status": (
+            "learning"
+            if latest and latest["learning_ready"]
+            else "collecting_indoor_data"
+        ),
+        "missing_for_full_inertia_learning": (
+            []
+            if latest and latest["learning_ready"]
+            else [
+                "outdoor_temperature",
+                "minimum_3_hours_history",
+            ]
+        ),
+        "parameters": [
+            dict(parameter)
+            for parameter in parameters
+        ],
+    }
+
+
+@app.get("/telemetry/count")
+def telemetry_count() -> dict[str, int]:
+    with engine.connect() as connection:
+        raw_count = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM telemetry_raw"
+            )
+        ).scalar_one()
+
+        measurement_count = connection.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM sensor_measurements
+                """
+            )
+        ).scalar_one()
+
+    return {
+        "raw_messages": raw_count,
+        "normalized_measurements":
+            measurement_count,
+    }
+
+
+@app.get("/telemetry/recent")
+def recent_telemetry(
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=500,
+    ),
+) -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    received_at,
+                    topic,
+                    payload_text,
+                    payload_json,
+                    qos,
+                    retained
+                FROM telemetry_raw
+                ORDER BY received_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).mappings().all()
+
+    return [dict(row) for row in rows]
+
+
+@app.get("/weather/status")
+def weather_status() -> dict[str, Any]:
+    return weather_service.status()
+
+
+@app.post("/weather/refresh")
+def weather_refresh() -> dict[str, Any]:
+    weather_service.refresh()
+
+    return {
+        "status": "refreshed",
+        "weather": weather_service.status(),
+    }
+
+
+@app.get("/weather/current")
+def weather_current() -> dict[str, Any]:
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT
+                    observed_at,
+                    fetched_at,
+                    provider,
+                    latitude,
+                    longitude,
+                    temperature,
+                    humidity,
+                    apparent_temperature,
+                    is_day,
+                    precipitation,
+                    rain,
+                    weather_code,
+                    cloud_cover,
+                    surface_pressure,
+                    wind_speed,
+                    wind_direction,
+                    wind_gusts
+                FROM weather_observations
+                ORDER BY observed_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+    if row is None:
+        return {
+            "status": "waiting_for_weather"
+        }
+
+    return dict(row)
+
+
+@app.get("/weather/forecast")
+def weather_forecast(
+    hours: int = Query(
+        default=48,
+        ge=1,
+        le=96,
+    ),
+) -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT
+                    forecast_at,
+                    fetched_at,
+                    provider,
+                    temperature,
+                    humidity,
+                    dew_point,
+                    apparent_temperature,
+                    precipitation_probability,
+                    precipitation,
+                    rain,
+                    weather_code,
+                    cloud_cover,
+                    visibility,
+                    surface_pressure,
+                    wind_speed,
+                    wind_direction,
+                    wind_gusts,
+                    shortwave_radiation,
+                    direct_radiation,
+                    diffuse_radiation,
+                    direct_normal_irradiance,
+                    sunshine_duration
+                FROM weather_forecasts
+                WHERE forecast_at >=
+                    DATE_TRUNC('hour', NOW())
+                ORDER BY forecast_at
+                LIMIT :hours
+                """
+            ),
+            {"hours": hours},
+        ).mappings().all()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+@app.get("/weather/intelligence")
+def weather_intelligence() -> dict[str, Any]:
+    with engine.connect() as connection:
+        current = connection.execute(
+            text(
+                """
+                SELECT
+                    observed_at,
+                    temperature,
+                    humidity,
+                    apparent_temperature,
+                    precipitation,
+                    rain,
+                    weather_code,
+                    cloud_cover,
+                    surface_pressure,
+                    wind_speed,
+                    wind_direction,
+                    wind_gusts
+                FROM weather_observations
+                ORDER BY observed_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+        summary = connection.execute(
+            text(
+                """
+                SELECT
+                    MIN(temperature)
+                        AS minimum_temperature,
+                    MAX(temperature)
+                        AS maximum_temperature,
+                    AVG(temperature)
+                        AS average_temperature,
+
+                    MIN(dew_point)
+                        AS minimum_dew_point,
+                    MAX(dew_point)
+                        AS maximum_dew_point,
+
+                    MAX(shortwave_radiation)
+                        AS maximum_solar_radiation,
+
+                    SUM(
+                        COALESCE(
+                            sunshine_duration,
+                            0
+                        )
+                    ) / 3600.0
+                        AS sunshine_hours,
+
+                    SUM(
+                        COALESCE(
+                            precipitation,
+                            0
+                        )
+                    )
+                        AS accumulated_precipitation,
+
+                    MAX(
+                        precipitation_probability
+                    )
+                        AS maximum_rain_probability,
+
+                    AVG(cloud_cover)
+                        AS average_cloud_cover,
+
+                    MAX(wind_speed)
+                        AS maximum_wind_speed,
+
+                    MAX(wind_gusts)
+                        AS maximum_wind_gust
+                FROM weather_forecasts
+                WHERE forecast_at BETWEEN
+                    NOW()
+                    AND NOW()
+                        + INTERVAL '24 hours'
+                """
+            )
+        ).mappings().first()
+
+        hottest = connection.execute(
+            text(
+                """
+                SELECT
+                    forecast_at,
+                    temperature,
+                    apparent_temperature,
+                    humidity,
+                    dew_point,
+                    shortwave_radiation,
+                    direct_radiation,
+                    cloud_cover
+                FROM weather_forecasts
+                WHERE forecast_at >= NOW()
+                ORDER BY
+                    temperature DESC NULLS LAST
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+        strongest_sun = connection.execute(
+            text(
+                """
+                SELECT
+                    forecast_at,
+                    temperature,
+                    shortwave_radiation,
+                    direct_radiation,
+                    diffuse_radiation,
+                    cloud_cover
+                FROM weather_forecasts
+                WHERE forecast_at >= NOW()
+                ORDER BY
+                    shortwave_radiation
+                    DESC NULLS LAST
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+        coolest = connection.execute(
+            text(
+                """
+                SELECT
+                    forecast_at,
+                    temperature,
+                    humidity,
+                    dew_point,
+                    cloud_cover,
+                    precipitation_probability
+                FROM weather_forecasts
+                WHERE forecast_at >= NOW()
+                ORDER BY
+                    temperature ASC NULLS LAST
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+        next_six_hours = connection.execute(
+            text(
+                """
+                SELECT
+                    MIN(temperature)
+                        AS minimum_temperature,
+                    MAX(temperature)
+                        AS maximum_temperature,
+                    MAX(shortwave_radiation)
+                        AS maximum_solar_radiation,
+                    MAX(
+                        precipitation_probability
+                    )
+                        AS maximum_rain_probability
+                FROM weather_forecasts
+                WHERE forecast_at BETWEEN
+                    NOW()
+                    AND NOW()
+                        + INTERVAL '6 hours'
+                """
+            )
+        ).mappings().first()
+
+    return {
+        "generated_at": utc_now(),
+        "current": (
+            dict(current)
+            if current
+            else None
+        ),
+        "next_6_hours": (
+            dict(next_six_hours)
+            if next_six_hours
+            else None
+        ),
+        "next_24_hours": (
+            dict(summary)
+            if summary
+            else None
+        ),
+        "hottest_forecast": (
+            dict(hottest)
+            if hottest
+            else None
+        ),
+        "coolest_forecast": (
+            dict(coolest)
+            if coolest
+            else None
+        ),
+        "strongest_solar_period": (
+            dict(strongest_sun)
+            if strongest_sun
+            else None
+        ),
+    }
+
+
+@app.get("/intelligence/status")
+def intelligence_status() -> dict[str, Any]:
+    return intelligence_service.status()
+
+
+@app.post("/intelligence/run")
+def intelligence_run() -> dict[str, Any]:
+    intelligence_service.run_once()
+
+    return {
+        "status": "completed",
+        "intelligence":
+            intelligence_service.status(),
+    }
+
+
+@app.get("/digital-twin/state")
+def digital_twin_state() -> dict[str, Any]:
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT *
+                FROM building_state
+                ORDER BY calculated_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+    if row is None:
+        return {
+            "status": "waiting_for_first_state"
+        }
+
+    return dict(row)
+
+
+@app.get("/intelligence/model")
+def intelligence_model() -> dict[str, Any]:
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT
+                    trained_at,
+                    model_version,
+                    sample_count,
+
+                    intercept,
+                    coefficient_indoor_outdoor_delta,
+                    coefficient_solar_radiation,
+                    coefficient_previous_slope,
+                    coefficient_geocooling,
+
+                    mean_absolute_error,
+                    confidence
+                FROM thermal_model
+                ORDER BY trained_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+    if row is None:
+        return {
+            "status": "collecting_training_data",
+            "minimum_samples":
+                intelligence_service.status()[
+                    "model_minimum_samples"
+                ],
+            "current_samples":
+                intelligence_service.status()[
+                    "model_sample_count"
+                ],
+        }
+
+    return dict(row)
+
+
+@app.get("/intelligence/predictions")
+def intelligence_predictions() -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        last_generation = connection.execute(
+            text(
+                """
+                SELECT MAX(generated_at)
+                FROM thermal_predictions
+                """
+            )
+        ).scalar_one_or_none()
+
+        if last_generation is None:
+            return []
+
+        rows = connection.execute(
+            text(
+                """
+                SELECT
+                    generated_at,
+                    horizon_hours,
+                    predicted_temperature_free,
+                    predicted_temperature_geocooling,
+                    comfort_target,
+                    overheating_risk,
+                    confidence,
+                    model_source
+                FROM thermal_predictions
+                WHERE generated_at = :generated_at
+                ORDER BY horizon_hours
+                """
+            ),
+            {
+                "generated_at":
+                    last_generation,
+            },
+        ).mappings().all()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+@app.get("/intelligence/recommendation")
+def intelligence_recommendation() -> dict[str, Any]:
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT
+                    generated_at,
+                    subsystem,
+                    action,
+                    priority,
+                    recommended_start_at,
+                    recommended_duration_minutes,
+                    reason,
+                    risk_level,
+                    automatic_execution,
+                    details
+                FROM control_recommendations
+                ORDER BY generated_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+
+    if row is None:
+        return {
+            "status": "waiting_for_recommendation"
+        }
+
+    return dict(row)
+
+
+@app.get("/intelligence/history")
+def intelligence_history(
+    hours: int = Query(
+        default=24,
+        ge=1,
+        le=720,
+    ),
+) -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT
+                    calculated_at,
+                    salon_temperature,
+                    etage_temperature,
+                    indoor_temperature,
+                    indoor_humidity,
+                    indoor_dew_point,
+                    outdoor_temperature,
+                    outdoor_solar_radiation,
+                    forecast_temperature_h6,
+                    indoor_outdoor_delta,
+                    temperature_slope_1h,
+                    condensation_limit,
+                    geocooling_active,
+                    data_quality
+                FROM building_state
+                WHERE calculated_at >=
+                    NOW()
+                    - (
+                        :hours
+                        * INTERVAL '1 hour'
+                    )
+                ORDER BY calculated_at
+                """
+            ),
+            {"hours": hours},
+        ).mappings().all()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ================================================================
+# SPRINT-005-1-GEOCOOLING-ROUTER
+# Contrôleur GeoCooling V1 — simulation uniquement
+# ================================================================
+from app.geocooling.api import router as geocooling_router
+
+app.include_router(geocooling_router)
+
+app.include_router(building_router)
+app.include_router(devices_router)
+app.include_router(events_router)

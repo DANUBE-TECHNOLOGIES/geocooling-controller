@@ -1,0 +1,94 @@
+ARCHITECTURE CIBLE
+
+ESP32 / Zigbee
+      |
+      v
+MQTT Mosquitto
+      |
+      v
+Smart Building Controller
+      |
+      +-- ThermalWorker
+      +-- ThermalEngine
+      +-- GeoCooling Brain V2
+      +-- Predictor
+      +-- Autopilot
+      +-- SafetyManager
+      |
+      +-- API REST
+      +-- états MQTT
+              |
+              v
+Home Assistant
+      |
+      +-- Capteurs GeoCooling
+      +-- Entités de diagnostic
+      +-- Commandes sécurisées
+      +-- Dashboard Lovelace
+      +-- Historique et graphiques
+
+
+AUCUN FRONTEND NEXT.JS.
+AUCUN LIEN AVEC LE MARKETING ENGINE.
+
+
+BRAIN V2 À DÉVELOPPER
+
+- score de besoin de refroidissement ;
+- prévisions intérieures à 1 h, 3 h et 6 h ;
+- prise en compte des tendances 1 h et 3 h ;
+- anticipation météo ;
+- gestion de l'inertie du bâtiment ;
+- risque de condensation ;
+- mode dégradé quand les sondes hydrauliques sont absentes ;
+- durée de fonctionnement recommandée ;
+- raisons détaillées pour START, STOP et WAIT ;
+- hystérésis et protection contre les cycles courts ;
+- indicateur de confiance de la décision.
+
+
+ENTITÉS HOME ASSISTANT À PRODUIRE
+
+- sensor.geocooling_controller_state
+- sensor.geocooling_brain_decision
+- sensor.geocooling_brain_score
+- sensor.geocooling_brain_confidence
+- sensor.geocooling_brain_reason
+- sensor.geocooling_indoor_temperature
+- sensor.geocooling_outdoor_temperature
+- sensor.geocooling_indoor_humidity
+- sensor.geocooling_dew_point
+- sensor.geocooling_condensation_margin
+- sensor.geocooling_prediction_1h
+- sensor.geocooling_prediction_3h
+- sensor.geocooling_prediction_6h
+- sensor.geocooling_recommended_runtime
+- sensor.geocooling_data_quality
+- sensor.geocooling_cycle_count
+- sensor.geocooling_last_cycle_duration
+- binary_sensor.geocooling_autopilot
+- binary_sensor.geocooling_pump
+- binary_sensor.geocooling_valve
+- binary_sensor.geocooling_safety_alert
+- switch.geocooling_autopilot
+- button.geocooling_start
+- button.geocooling_stop
+
+
+DASHBOARD LOVE­LACE À PRODUIRE
+
+- vue synthèse ;
+- état machine ;
+- décision du Brain ;
+- raisons de décision ;
+- températures et humidité ;
+- point de rosée et marge de condensation ;
+- prévisions 1 h, 3 h et 6 h ;
+- graphiques historiques ;
+- état Autopilot ;
+- état vanne et pompe ;
+- chronologie des cycles ;
+- qualité des données ;
+- sondes disponibles et absentes ;
+- alertes de sécurité ;
+- commandes manuelles protégées.

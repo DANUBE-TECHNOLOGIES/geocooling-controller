@@ -1,0 +1,380 @@
+import json
+import logging
+import os
+import threading
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Any
+
+import paho.mqtt.client as mqtt
+from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
+from sqlalchemy import create_engine, text
+
+APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
+DATABASE_URL = os.environ["DATABASE_URL"]
+
+MQTT_HOST = os.getenv("MQTT_HOST", "host.docker.internal")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
+MQTT_TOPICS = [
+    topic.strip()
+    for topic in os.getenv(
+        "MQTT_TOPICS",
+        "zigbee2mqtt/#,geocooling/#,esphome/#",
+    ).split(",")
+    if topic.strip()
+]
+
+logging.basicConfig(
+    level=getattr(
+        logging,
+        os.getenv("LOG_LEVEL", "INFO").upper(),
+        logging.INFO,
+    ),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
+logger = logging.getLogger("sbc")
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+started_at = time.monotonic()
+
+
+def initialize_database() -> None:
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS telemetry_raw (
+            id BIGSERIAL PRIMARY KEY,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            topic TEXT NOT NULL,
+            payload_text TEXT NOT NULL,
+            payload_json JSONB,
+            qos INTEGER NOT NULL DEFAULT 0,
+            retained BOOLEAN NOT NULL DEFAULT FALSE
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_telemetry_raw_received_at
+        ON telemetry_raw (received_at DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_telemetry_raw_topic
+        ON telemetry_raw (topic)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS system_events (
+            id BIGSERIAL PRIMARY KEY,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            event_type TEXT NOT NULL,
+            details JSONB NOT NULL DEFAULT '{}'::jsonb
+        )
+        """,
+    ]
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def database_is_available() -> bool:
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+class MQTTCollector:
+    def __init__(self) -> None:
+        self.connected = False
+        self.last_error: str | None = None
+        self.last_message_at: str | None = None
+        self.message_count = 0
+        self.stop_event = threading.Event()
+
+        self.client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id="sbc-controller",
+            protocol=mqtt.MQTTv311,
+        )
+
+        if MQTT_USERNAME:
+            self.client.username_pw_set(
+                MQTT_USERNAME,
+                MQTT_PASSWORD,
+            )
+
+        self.client.on_connect = self.on_connect
+        self.client.on_disconnect = self.on_disconnect
+        self.client.on_message = self.on_message
+
+    def on_connect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        flags: Any,
+        reason_code: Any,
+        properties: Any,
+    ) -> None:
+        if reason_code == 0:
+            self.connected = True
+            self.last_error = None
+
+            for topic in MQTT_TOPICS:
+                client.subscribe(topic, qos=0)
+                logger.info("Abonnement MQTT : %s", topic)
+
+            logger.info(
+                "Connecté à MQTT sur %s:%s",
+                MQTT_HOST,
+                MQTT_PORT,
+            )
+        else:
+            self.connected = False
+            self.last_error = f"Code MQTT : {reason_code}"
+
+    def on_disconnect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        disconnect_flags: Any,
+        reason_code: Any,
+        properties: Any,
+    ) -> None:
+        self.connected = False
+
+        if reason_code != 0:
+            self.last_error = f"Déconnexion MQTT : {reason_code}"
+            logger.warning(self.last_error)
+
+    def on_message(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        message: mqtt.MQTTMessage,
+    ) -> None:
+        payload_text = message.payload.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+        payload_json = None
+
+        try:
+            payload_json = json.loads(payload_text)
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO telemetry_raw (
+                            topic,
+                            payload_text,
+                            payload_json,
+                            qos,
+                            retained
+                        )
+                        VALUES (
+                            :topic,
+                            :payload_text,
+                            CAST(:payload_json AS JSONB),
+                            :qos,
+                            :retained
+                        )
+                        """
+                    ),
+                    {
+                        "topic": message.topic,
+                        "payload_text": payload_text,
+                        "payload_json": (
+                            json.dumps(payload_json)
+                            if payload_json is not None
+                            else None
+                        ),
+                        "qos": message.qos,
+                        "retained": message.retain,
+                    },
+                )
+
+            self.message_count += 1
+            self.last_message_at = datetime.now(
+                timezone.utc
+            ).isoformat()
+
+        except Exception as exc:
+            self.last_error = f"Stockage MQTT : {exc}"
+            logger.exception("Erreur de stockage MQTT")
+
+    def start(self) -> None:
+        def worker() -> None:
+            while not self.stop_event.is_set():
+                try:
+                    self.client.connect(
+                        MQTT_HOST,
+                        MQTT_PORT,
+                        keepalive=60,
+                    )
+                    self.client.loop_forever(
+                        retry_first_connection=True
+                    )
+                except Exception as exc:
+                    self.connected = False
+                    self.last_error = str(exc)
+                    logger.warning(
+                        "MQTT indisponible : %s",
+                        exc,
+                    )
+                    time.sleep(5)
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="mqtt-collector",
+        ).start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+        try:
+            self.client.disconnect()
+        except Exception:
+            pass
+
+
+collector = MQTTCollector()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    collector.start()
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO system_events (
+                    event_type,
+                    details
+                )
+                VALUES (
+                    'application_started',
+                    CAST(:details AS JSONB)
+                )
+                """
+            ),
+            {
+                "details": json.dumps(
+                    {"version": APP_VERSION}
+                )
+            },
+        )
+
+    yield
+    collector.stop()
+
+
+app = FastAPI(
+    title="Smart Building Controller",
+    version=APP_VERSION,
+    lifespan=lifespan,
+)
+
+
+@app.get("/")
+def root() -> dict[str, Any]:
+    return {
+        "project": "Smart Building Controller",
+        "version": APP_VERSION,
+        "status": "running",
+        "documentation": "/docs",
+    }
+
+
+@app.get("/health/live")
+def health_live() -> dict[str, str]:
+    return {"status": "alive"}
+
+
+@app.get("/health")
+def health() -> JSONResponse:
+    database_ok = database_is_available()
+
+    status = (
+        "healthy"
+        if database_ok and collector.connected
+        else "degraded"
+    )
+
+    payload = {
+        "status": status,
+        "version": APP_VERSION,
+        "uptime_seconds": round(
+            time.monotonic() - started_at,
+            1,
+        ),
+        "database": (
+            "connected"
+            if database_ok
+            else "disconnected"
+        ),
+        "mqtt": {
+            "connected": collector.connected,
+            "host": MQTT_HOST,
+            "port": MQTT_PORT,
+            "topics": MQTT_TOPICS,
+            "message_count": collector.message_count,
+            "last_message_at": collector.last_message_at,
+            "last_error": collector.last_error,
+        },
+    }
+
+    return JSONResponse(
+        payload,
+        status_code=200 if status == "healthy" else 503,
+    )
+
+
+@app.get("/telemetry/recent")
+def recent_telemetry(
+    limit: int = Query(default=50, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    received_at,
+                    topic,
+                    payload_text,
+                    payload_json,
+                    qos,
+                    retained
+                FROM telemetry_raw
+                ORDER BY received_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).mappings().all()
+
+    return [dict(row) for row in rows]
+
+
+@app.get("/telemetry/count")
+def telemetry_count() -> dict[str, int]:
+    with engine.connect() as connection:
+        count = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM telemetry_raw"
+            )
+        ).scalar_one()
+
+    return {"count": count}

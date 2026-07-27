@@ -1,0 +1,1349 @@
+from typing import Any
+
+from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.responses import JSONResponse
+
+from app.geocooling.controller import GeoCoolingController
+from app.geocooling.health_manager import GeoCoolingHealthManager
+from app.geocooling.commissioning_manager import GeoCoolingCommissioningManager
+from app.geocooling.commissioning_test_manager import GeoCoolingCommissioningTestManager
+from app.geocooling.flight_recorder import GeoCoolingFlightRecorder
+from app.geocooling.event_timeline import GeoCoolingEventTimeline
+from app.geocooling.watchdog_manager import GeoCoolingWatchdog
+from app.geocooling.runtime_manager import GeoCoolingRuntime
+from app.geocooling.state_cache import GeoCoolingStateCache
+from app.geocooling.event_subscription_manager import EventSubscriptionManager
+from app.geocooling.event_consumers import GeoCoolingEventConsumers
+from app.geocooling.realtime_metrics import GeoCoolingRealtimeMetrics
+from app.geocooling.controller_command_bridge import GeoCoolingControllerCommandBridge
+from app.geocooling.brain_decision_publisher import GeoCoolingBrainDecisionPublisher
+from app.geocooling.controller_safety_gate import GeoCoolingControllerSafetyGate
+from app.geocooling.execution_supervisor import GeoCoolingExecutionSupervisor
+from app.geocooling.execution_analyzer import GeoCoolingExecutionAnalyzer
+from app.geocooling.thermal_performance_analyzer import GeoCoolingThermalPerformanceAnalyzer
+from app.geocooling.brain_feedback import GeoCoolingBrainFeedback
+from app.geocooling.operational_certification import OperationalCertificationEngine
+from app.geocooling.sensor_mqtt_discovery import SensorMQTTDiscovery
+from app.geocooling.sensor_validation import SensorValidationEngine
+
+router = APIRouter(prefix="/geocooling", tags=["GeoCooling"])
+controller = GeoCoolingController()
+health_manager = GeoCoolingHealthManager(controller)
+commissioning_manager = GeoCoolingCommissioningManager(controller, health_manager)
+commissioning_test_manager = GeoCoolingCommissioningTestManager(controller)
+state_cache = GeoCoolingStateCache(controller)
+controller.attach_state_cache(state_cache)
+flight_recorder = GeoCoolingFlightRecorder(controller, state_cache)
+event_timeline = GeoCoolingEventTimeline(controller, flight_recorder, commissioning_test_manager)
+watchdog = GeoCoolingWatchdog(controller, flight_recorder, state_cache)
+
+# Registre d'exécution central GeoCooling — PATCH C007
+runtime = GeoCoolingRuntime(
+    controller=controller,
+    health_manager=health_manager,
+    commissioning_manager=commissioning_manager,
+    commissioning_test_manager=commissioning_test_manager,
+    state_cache=state_cache,
+    flight_recorder=flight_recorder,
+    event_timeline=event_timeline,
+    watchdog=watchdog,
+)
+
+# PATCH C011B — Snapshot Builder Runtime
+runtime.register(
+    "snapshot_builder",
+    controller.snapshot_builder,
+)
+
+# PATCH C012.0 — Event Bus Runtime Registration
+runtime.register(
+    "event_bus",
+    controller.event_bus,
+)
+
+
+# PATCH C012.2 — State Cache Event Bus Attachment
+setattr(
+    state_cache,
+    "_event_bus",
+    controller.event_bus,
+)
+
+
+
+
+# PATCH C012.3R4 — Brain Event Bus Attachment
+_c0123r4_brain = getattr(controller, "brain", None)
+_c0123r4_event_bus = getattr(controller, "event_bus", None)
+
+if (
+    _c0123r4_brain is not None
+    and _c0123r4_event_bus is not None
+):
+    setattr(
+        _c0123r4_brain,
+        "_event_bus",
+        _c0123r4_event_bus,
+    )
+
+# PATCH C012.4R1 — Predictor Event Bus Attachment
+_c0124r1_predictor = getattr(
+    controller,
+    "predictor",
+    None,
+)
+
+_c0124r1_event_bus = getattr(
+    controller,
+    "event_bus",
+    None,
+)
+
+if (
+    _c0124r1_predictor is not None
+    and _c0124r1_event_bus is not None
+):
+    setattr(
+        _c0124r1_predictor,
+        "_event_bus",
+        _c0124r1_event_bus,
+    )
+
+# PATCH C013.0R2 — Subscription Manager Bootstrap
+event_subscription_manager = EventSubscriptionManager(
+    history_capacity=200,
+)
+
+_c0130r2_event_bus = getattr(
+    controller,
+    "event_bus",
+    None,
+)
+
+if _c0130r2_event_bus is None:
+    raise RuntimeError(
+        "C013.0R2 : controller.event_bus est absent."
+    )
+
+setattr(
+    _c0130r2_event_bus,
+    "_subscription_manager",
+    event_subscription_manager,
+)
+
+setattr(
+    controller,
+    "event_subscription_manager",
+    event_subscription_manager,
+)
+
+# PATCH C013.1+C013.2R1 — Event Consumers Bootstrap
+event_consumers = GeoCoolingEventConsumers(
+    subscription_manager=event_subscription_manager,
+    flight_recorder=flight_recorder,
+    event_timeline=event_timeline,
+)
+
+setattr(
+    controller,
+    "event_consumers",
+    event_consumers,
+)
+
+# PATCH C013.3R1 — Realtime Metrics Bootstrap
+realtime_metrics = GeoCoolingRealtimeMetrics(
+    subscription_manager=event_subscription_manager,
+)
+
+setattr(
+    controller,
+    "realtime_metrics",
+    realtime_metrics,
+)
+
+# PATCH C014.0R1 — Controller Command Bridge Bootstrap
+controller_command_bridge = (
+    GeoCoolingControllerCommandBridge(
+        controller=controller,
+        subscription_manager=event_subscription_manager,
+        event_bus=controller.event_bus,
+        armed=False,
+        cooldown_seconds=30.0,
+        deduplication_seconds=10.0,
+    )
+)
+
+setattr(
+    controller,
+    "controller_command_bridge",
+    controller_command_bridge,
+)
+
+# PATCH C014.1+C014.2R2 — Publisher and Safety Gate Bootstrap
+brain_decision_publisher = (
+    GeoCoolingBrainDecisionPublisher(
+        subscription_manager=event_subscription_manager,
+        event_bus=controller.event_bus,
+        deduplication_seconds=2.0,
+    )
+)
+
+controller_safety_gate = (
+    GeoCoolingControllerSafetyGate(
+        controller=controller,
+        state_cache=state_cache,
+        subscription_manager=event_subscription_manager,
+        event_bus=controller.event_bus,
+        maximum_thermal_age_seconds=180.0,
+        minimum_confidence=0.0,
+        minimum_data_quality=0.0,
+    )
+)
+
+setattr(
+    controller,
+    "brain_decision_publisher",
+    brain_decision_publisher,
+)
+
+setattr(
+    controller,
+    "controller_safety_gate",
+    controller_safety_gate,
+)
+
+# PATCH C015.0R1 — Execution Supervisor Bootstrap
+execution_supervisor = GeoCoolingExecutionSupervisor(
+    subscription_manager=event_subscription_manager,
+    event_bus=controller.event_bus,
+    history_capacity=500,
+    event_capacity=1000,
+)
+
+setattr(
+    controller,
+    "execution_supervisor",
+    execution_supervisor,
+)
+
+# PATCH C015.1R1 — Execution Analyzer Bootstrap
+execution_analyzer = GeoCoolingExecutionAnalyzer(
+    controller=controller,
+    subscription_manager=event_subscription_manager,
+    event_bus=controller.event_bus,
+    history_capacity=500,
+    event_capacity=2000,
+)
+
+setattr(
+    controller,
+    "execution_analyzer",
+    execution_analyzer,
+)
+
+# PATCH C015.2R1 — Thermal Performance Analyzer Bootstrap
+thermal_performance_analyzer = (
+    GeoCoolingThermalPerformanceAnalyzer(
+        controller=controller,
+        thermal_engine=controller.thermal_engine,
+        subscription_manager=event_subscription_manager,
+        event_bus=controller.event_bus,
+        history_capacity=500,
+        event_capacity=1000,
+    )
+)
+
+setattr(
+    controller,
+    "thermal_performance_analyzer",
+    thermal_performance_analyzer,
+)
+
+# PATCH C015.3R1 — Brain Feedback Bootstrap
+brain_feedback = GeoCoolingBrainFeedback(
+    controller=controller,
+    subscription_manager=event_subscription_manager,
+    event_bus=controller.event_bus,
+    engine=controller.engine,
+    history_capacity=1000,
+    rolling_window=20,
+)
+
+setattr(
+    controller,
+    "brain_feedback",
+    brain_feedback,
+)
+
+# PATCH C016.0R1 — Operational Certification Bootstrap
+operational_certification = OperationalCertificationEngine(
+    controller=controller,
+    event_bus=controller.event_bus,
+    controller_command_bridge=globals().get(
+        "controller_command_bridge"
+    ),
+    execution_supervisor=globals().get(
+        "execution_supervisor"
+    ),
+    execution_analyzer=globals().get(
+        "execution_analyzer"
+    ),
+    thermal_performance_analyzer=globals().get(
+        "thermal_performance_analyzer"
+    ),
+    brain_feedback=globals().get(
+        "brain_feedback"
+    ),
+    state_cache=getattr(
+        controller,
+        "state_cache",
+        globals().get("state_cache"),
+    ),
+    history_capacity=500,
+)
+
+setattr(
+    controller,
+    "operational_certification",
+    operational_certification,
+)
+
+# PATCH C016.1R1 — Sensor MQTT Discovery Bootstrap
+sensor_mqtt_discovery = SensorMQTTDiscovery(
+    event_bus=getattr(
+        controller,
+        "event_bus",
+        globals().get("event_bus"),
+    ),
+    controller=controller,
+    expected_sensor_count=4,
+    history_capacity=1000,
+)
+
+sensor_mqtt_discovery.start()
+
+setattr(
+    controller,
+    "sensor_mqtt_discovery",
+    sensor_mqtt_discovery,
+)
+
+# PATCH C016.1R2 — Sensor Validation Bootstrap
+sensor_validation = SensorValidationEngine(sensor_discovery=sensor_mqtt_discovery,event_bus=getattr(controller,"event_bus",globals().get("event_bus")),controller=controller)
+setattr(controller,"sensor_validation",sensor_validation)
+@router.get("/status")
+def get_status() -> dict:
+    return controller.status()
+
+
+@router.get("/device")
+def get_device_status() -> dict:
+    return controller.device_manager.status()
+
+
+@router.post("/start")
+def start_geocooling() -> JSONResponse:
+    result = controller.request_start()
+    return JSONResponse(status_code=202 if result["accepted"] else 409, content=result)
+
+
+@router.post("/stop")
+def stop_geocooling() -> JSONResponse:
+    result = controller.request_stop()
+    return JSONResponse(status_code=202 if result["accepted"] else 409, content=result)
+
+
+@router.post("/emergency-stop")
+def emergency_stop() -> JSONResponse:
+    return JSONResponse(status_code=200, content=controller.emergency_stop())
+
+
+@router.post("/reset")
+def reset_controller() -> JSONResponse:
+    result = controller.reset()
+    return JSONResponse(status_code=200 if result["accepted"] else 409, content=result)
+
+
+@router.get("/history")
+def get_history(limit: int = Query(default=50, ge=1, le=500)) -> dict:
+    return {"count": limit, "items": controller.history(limit)}
+
+
+@router.get("/diagnostics")
+def get_diagnostics() -> dict:
+    return controller.diagnostics()
+
+
+@router.get("/safety")
+def get_safety() -> dict:
+    return controller.status()["safety"]
+
+
+@router.put("/thermal-snapshot")
+def put_thermal_snapshot(payload: dict[str, Any] = Body(...)) -> dict:
+    try:
+        return controller.ingest_thermal_snapshot(payload)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/thermal")
+def get_thermal() -> dict:
+    return controller.thermal_status()
+
+
+@router.get("/thermal/history")
+def get_thermal_history(limit: int = Query(default=200, ge=1, le=5000)) -> dict:
+    items = controller.thermal_history(limit)
+    return {"count": len(items), "items": items}
+
+
+@router.get("/autopilot")
+def get_autopilot() -> dict:
+    return controller.autopilot_status()
+
+
+@router.get("/brain")
+def get_brain() -> dict:
+    return controller.brain_status()
+
+
+@router.get("/prediction")
+def get_prediction() -> dict:
+    return controller.prediction_status()
+
+
+@router.get("/home-assistant")
+def get_home_assistant_status() -> dict:
+    return controller.home_assistant_status()
+
+
+# PATCH-001E-MANUAL-COMMAND-API
+def _manual_payload_value(
+    payload: dict | None,
+    key: str,
+    default: object,
+) -> object:
+    if payload is None:
+        return default
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Le corps de la requête doit être un objet JSON.",
+        )
+
+    return payload.get(key, default)
+
+
+def _manual_requested_by(
+    payload: dict | None,
+) -> str:
+    value = _manual_payload_value(
+        payload,
+        "requested_by",
+        "home-assistant",
+    )
+
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=422,
+            detail="requested_by doit être une chaîne.",
+        )
+
+    value = value.strip()
+
+    return value or "home-assistant"
+
+
+def _manual_reason(
+    payload: dict | None,
+    default: str,
+) -> str:
+    value = _manual_payload_value(
+        payload,
+        "reason",
+        default,
+    )
+
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=422,
+            detail="reason doit être une chaîne.",
+        )
+
+    return value.strip() or default
+
+
+def _manual_duration(
+    payload: dict | None,
+) -> int:
+    value = _manual_payload_value(
+        payload,
+        "duration_seconds",
+        controller.command_manager.DEFAULT_DURATION_SECONDS,
+    )
+
+    if isinstance(value, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="duration_seconds doit être un entier.",
+        )
+
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="duration_seconds doit être un entier.",
+        ) from exc
+
+
+def _manual_metadata(
+    payload: dict | None,
+) -> dict:
+    value = _manual_payload_value(
+        payload,
+        "metadata",
+        {},
+    )
+
+    if value is None:
+        return {}
+
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="metadata doit être un objet JSON.",
+        )
+
+    return dict(value)
+
+
+def _persist_active_manual_command() -> None:
+    command = controller.command_manager.active_command_object()
+
+    if command is not None:
+        controller.brain_memory.save_manual_command(command)
+
+
+def _record_manual_event(
+    *,
+    event_type: str,
+    reason: str,
+    details: dict,
+    level: str = "INFO",
+) -> None:
+    controller.brain_memory.record_event(
+        level=level,
+        event_type=event_type,
+        reason=reason,
+        source="manual-api",
+        details=details,
+    )
+
+
+def _create_manual_command(
+    *,
+    command_type: str,
+    payload: dict | None,
+) -> dict:
+    requested_by = _manual_requested_by(payload)
+    duration_seconds = _manual_duration(payload)
+    reason = _manual_reason(
+        payload,
+        (
+            "Demande de démarrage manuel sécurisé"
+            if command_type == "START"
+            else "Demande d'arrêt manuel sécurisé"
+        ),
+    )
+    metadata = _manual_metadata(payload)
+
+    metadata.setdefault("source", "rest-api")
+    metadata.setdefault("api_route", f"/geocooling/manual/{command_type.lower()}")
+
+    try:
+        result = controller.command_manager.request(
+            command_type=command_type,
+            requested_by=requested_by,
+            duration_seconds=duration_seconds,
+            reason=reason,
+            metadata=metadata,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    if not result.get("accepted"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": result.get(
+                    "reason",
+                    "Commande manuelle refusée.",
+                ),
+                "active_command": result.get("active_command"),
+            },
+        )
+
+    command = controller.command_manager.active_command_object()
+
+    if command is None:
+        raise HTTPException(
+            status_code=500,
+            detail="La commande créée est introuvable.",
+        )
+
+    try:
+        controller.brain_memory.save_manual_command(command)
+
+        _record_manual_event(
+            event_type=(
+                "geocooling.manual.start_requested"
+                if command_type == "START"
+                else "geocooling.manual.stop_requested"
+            ),
+            reason=reason,
+            details={
+                "command_id": command.id,
+                "command": command.command.value,
+                "status": command.status.value,
+                "requested_by": command.requested_by,
+                "duration_seconds": command.duration_seconds,
+                "metadata": dict(command.metadata),
+            },
+        )
+    except Exception as exc:
+        controller.command_manager.cancel(
+            requested_by="system",
+            reason="Échec de persistance PostgreSQL",
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "La commande n'a pas été conservée car son "
+                "historisation PostgreSQL a échoué."
+            ),
+        ) from exc
+
+    execution = controller.execute_pending_manual_command()
+
+    execution["manual_status"] = (
+        controller.command_manager.status()
+    )
+
+    return execution
+
+
+@router.post("/manual/start")
+def manual_start(
+    payload: dict | None = Body(default=None),
+) -> dict:
+    """
+    Enregistre une demande de démarrage manuel sécurisé.
+
+    Cette route ne pilote pas directement les équipements.
+    """
+
+    return _create_manual_command(
+        command_type="START",
+        payload=payload,
+    )
+
+
+@router.post("/manual/stop")
+def manual_stop(
+    payload: dict | None = Body(default=None),
+) -> dict:
+    """
+    Enregistre une demande d'arrêt manuel sécurisé.
+
+    Cette route ne pilote pas directement les équipements.
+    """
+
+    return _create_manual_command(
+        command_type="STOP",
+        payload=payload,
+    )
+
+
+@router.post("/manual/cancel")
+def manual_cancel(
+    payload: dict | None = Body(default=None),
+) -> JSONResponse:
+    """
+    Annule la commande manuelle active.
+
+    Lorsqu'un START est déjà en cours, le contrôleur demande d'abord
+    l'arrêt sécurisé de l'installation. La commande n'est pas retirée
+    prématurément si l'arrêt est temporairement différé.
+    """
+
+    requested_by = _manual_requested_by(payload)
+    reason = _manual_reason(
+        payload,
+        "Annulation de la commande manuelle",
+    )
+
+    try:
+        result = controller.cancel_manual_command(
+            requested_by=requested_by,
+            reason=reason,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Échec de l'annulation sécurisée de la commande "
+                "manuelle."
+            ),
+        ) from exc
+
+    status_code = int(
+        result.pop(
+            "status_code",
+            200 if result.get("accepted") else 409,
+        )
+    )
+
+    result["manual_status"] = (
+        controller.command_manager.status()
+    )
+
+    return JSONResponse(
+        status_code=status_code,
+        content=result,
+    )
+
+
+@router.get("/manual/status")
+def manual_status() -> dict:
+    """
+    Retourne la commande active et l'état du gestionnaire.
+    """
+
+    expired_command = controller.command_manager.cleanup_expired()
+
+    if expired_command is not None:
+        try:
+            recent_objects = controller.command_manager.history(limit=1)
+
+            _record_manual_event(
+                event_type="geocooling.manual.command_expired",
+                reason="Durée maximale de la commande dépassée",
+                details={
+                    "command": expired_command,
+                    "history_head": (
+                        recent_objects[0]
+                        if recent_objects
+                        else None
+                    ),
+                },
+                level="WARNING",
+            )
+        except Exception:
+            pass
+
+    status = controller.command_manager.status()
+
+    return {
+        "active": status["active"],
+        "active_command": status["active_command"],
+        "history_count": status["history_count"],
+        "duration_limits": status["duration_limits"],
+        "controller": {
+            "mode": controller.mode.value,
+            "state": controller.state.value,
+        },
+    }
+
+
+@router.get("/manual/history")
+def manual_history(
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict:
+    """
+    Retourne l'historique mémoire et l'historique PostgreSQL.
+    """
+
+    try:
+        persisted = controller.brain_memory.recent_manual_commands(
+            limit=limit
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Lecture de l'historique PostgreSQL impossible.",
+        ) from exc
+
+    return {
+        "limit": limit,
+        "active_command": (
+            controller.command_manager.active_command()
+        ),
+        "memory_history": controller.command_manager.history(
+            limit=limit
+        ),
+        "persisted_history": persisted,
+        "persisted_count": len(persisted),
+    }
+
+@router.get("/health")
+def get_geocooling_health() -> dict:
+    """Retourne le diagnostic GeoCooling consolidé en lecture seule."""
+
+    return health_manager.status()
+
+@router.get("/commissioning")
+def get_geocooling_commissioning() -> dict:
+    """Retourne la checklist GeoCooling de mise en service."""
+
+    return commissioning_manager.status()
+
+@router.get("/commissioning/tests")
+def get_geocooling_commissioning_tests() -> dict:
+    """Retourne l'état des tests temporisés de mise en service."""
+
+    return commissioning_test_manager.status()
+
+
+@router.post("/commissioning/test/valve")
+def test_geocooling_valve(
+    payload: dict = Body(default={}),
+) -> dict:
+    """Lance un test temporisé de l'électrovanne."""
+
+    try:
+        return commissioning_test_manager.start_test(
+            target="valve",
+            duration_seconds=payload.get(
+                "duration_seconds"
+            ),
+            confirmation=payload.get(
+                "confirmation"
+            ),
+            requested_by=str(
+                payload.get(
+                    "requested_by",
+                    "api",
+                )
+            ),
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/commissioning/test/pump")
+def test_geocooling_pump(
+    payload: dict = Body(default={}),
+) -> dict:
+    """Lance un test hydraulique temporisé du circulateur."""
+
+    try:
+        return commissioning_test_manager.start_test(
+            target="pump",
+            duration_seconds=payload.get(
+                "duration_seconds"
+            ),
+            confirmation=payload.get(
+                "confirmation"
+            ),
+            requested_by=str(
+                payload.get(
+                    "requested_by",
+                    "api",
+                )
+            ),
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/commissioning/test/cancel")
+def cancel_geocooling_commissioning_test() -> dict:
+    """Annule le test actif et impose l'arrêt des sorties."""
+
+    return commissioning_test_manager.cancel_test()
+
+@router.get("/flight-recorder")
+def get_geocooling_flight_recorder(
+    limit: int = 300,
+    errors_only: bool = False,
+    include_controller: bool = True,
+) -> dict:
+    """Retourne l'historique circulaire du Controller."""
+
+    return flight_recorder.status(
+        limit=limit,
+        errors_only=errors_only,
+        include_controller=include_controller,
+    )
+
+
+@router.get("/flight-recorder/latest")
+def get_geocooling_flight_recorder_latest() -> dict:
+    """Retourne le dernier instantané du Controller."""
+
+    return flight_recorder.latest()
+
+@router.get("/events")
+def get_geocooling_events(
+    limit: int = 100,
+    source: str | None = None,
+    severity: str | None = None,
+    event_type: str | None = None,
+) -> dict:
+    """Retourne la chronologie unifiée des événements GeoCooling."""
+
+    return event_timeline.status(
+        limit=limit,
+        source=source,
+        severity=severity,
+        event_type=event_type,
+    )
+
+
+@router.get("/events/latest")
+def get_geocooling_latest_event() -> dict:
+    """Retourne le dernier événement GeoCooling connu."""
+
+    return event_timeline.latest()
+
+@router.get("/watchdog")
+def get_geocooling_watchdog() -> dict:
+    """Retourne l'analyse complète du Watchdog GeoCooling."""
+
+    return watchdog.evaluate()
+
+
+@router.get("/watchdog/alerts")
+def get_geocooling_watchdog_alerts() -> dict:
+    """Retourne uniquement les alertes actives du Watchdog."""
+
+    return watchdog.alerts()
+
+@router.get("/runtime")
+def get_geocooling_runtime() -> dict:
+    """Retourne l'état structurel du Runtime GeoCooling."""
+
+    return runtime.status()
+
+@router.get("/state-cache")
+def get_geocooling_state_cache(
+    include_controller: bool = True,
+) -> dict:
+    """Retourne le dernier état Controller mis en cache."""
+
+    return state_cache.status(
+        include_controller=include_controller
+    )
+
+@router.get("/snapshot-builder")
+def get_geocooling_snapshot_builder() -> dict:
+    """Expose les métriques du Snapshot Builder."""
+    return controller.snapshot_builder.status()
+
+
+# PATCH C011D.2 — Snapshot History API
+@router.get("/snapshot-builder/history")
+def get_geocooling_snapshot_builder_history(
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    """Expose l'historique mémoire du Snapshot Builder."""
+
+    return controller.snapshot_builder.history(
+        limit=limit
+    )
+
+
+# PATCH C012.0 — Event Bus API
+@router.get("/event-bus")
+def get_geocooling_event_bus() -> dict[str, Any]:
+    """Expose l'état du bus d'événements GeoCooling."""
+
+    return controller.event_bus.status()
+
+@router.get("/subscriptions")
+def geocooling_subscriptions():
+    return event_subscription_manager.status()
+
+
+@router.get("/subscriptions/history")
+def geocooling_subscriptions_history(
+    limit: int = 20,
+):
+    normalized_limit = max(
+        0,
+        min(
+            int(limit),
+            200,
+        ),
+    )
+
+    return {
+        "overall": "OK",
+        "component": "event_subscription_manager",
+        "limit": normalized_limit,
+        "history": event_subscription_manager.history(
+            limit=normalized_limit,
+        ),
+    }
+
+@router.get("/event-consumers")
+def get_geocooling_event_consumers():
+    return event_consumers.status()
+
+
+@router.get("/event-consumers/history")
+def get_geocooling_event_consumers_history(
+    limit: int = Query(default=100, ge=1, le=500),
+    event_type: str | None = None,
+):
+    return event_consumers.history(
+        limit=limit,
+        event_type=event_type,
+    )
+
+# PATCH C013.3R1 — Realtime Metrics API
+@router.get("/realtime-metrics")
+def get_geocooling_realtime_metrics():
+    return realtime_metrics.status()
+
+
+@router.get("/realtime-metrics/recent")
+def get_geocooling_realtime_metrics_recent(
+    limit: int = Query(default=100, ge=1, le=1000),
+    event_type: str | None = None,
+):
+    return realtime_metrics.recent(
+        limit=limit,
+        event_type=event_type,
+    )
+
+# PATCH C014.0R1 — Controller Command Bridge API
+@router.get("/controller-command-bridge")
+def get_controller_command_bridge():
+    return controller_command_bridge.status()
+
+
+@router.get("/controller-command-bridge/history")
+def get_controller_command_bridge_history(
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    return controller_command_bridge.history(
+        limit=limit,
+    )
+
+
+@router.post("/controller-command-bridge/arm")
+def arm_controller_command_bridge(
+    confirmation: str = Body(
+        embed=True,
+        default="",
+    ),
+):
+    if confirmation != "ARM_GEOCOOLING":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Confirmation requise : "
+                "ARM_GEOCOOLING"
+            ),
+        )
+
+    result = controller_command_bridge.arm()
+
+    if result.get("overall") != "OK":
+        raise HTTPException(
+            status_code=409,
+            detail=result,
+        )
+
+    return result
+
+
+@router.post("/controller-command-bridge/disarm")
+def disarm_controller_command_bridge():
+    return controller_command_bridge.disarm()
+
+# PATCH C014.1R2 — Brain Decision Publisher API
+@router.get("/brain-decision-publisher")
+def get_brain_decision_publisher():
+    return brain_decision_publisher.status()
+
+
+@router.get("/brain-decision-publisher/history")
+def get_brain_decision_publisher_history(
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    return brain_decision_publisher.history(
+        limit=limit,
+    )
+
+
+# PATCH C014.2R2 — Controller Safety Gate API
+@router.get("/controller-safety-gate")
+def get_controller_safety_gate():
+    return controller_safety_gate.status()
+
+
+@router.get("/controller-safety-gate/history")
+def get_controller_safety_gate_history(
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    return controller_safety_gate.history(
+        limit=limit,
+    )
+
+
+@router.get("/controller-safety-gate/evaluate")
+def evaluate_controller_safety_gate(
+    action: str = Query(default="start"),
+):
+    return controller_safety_gate.evaluate_current(
+        action=action,
+    )
+
+# PATCH C015.0R1 — Execution Supervisor API
+@router.get("/execution-supervisor")
+def get_execution_supervisor():
+    return execution_supervisor.status()
+
+
+@router.get("/execution-supervisor/current")
+def get_execution_supervisor_current():
+    return execution_supervisor.current()
+
+
+@router.get("/execution-supervisor/history")
+def get_execution_supervisor_history(
+    limit: int = 100,
+):
+    return execution_supervisor.history(
+        limit=max(1, min(limit, 500)),
+    )
+
+
+@router.get("/execution-supervisor/events")
+def get_execution_supervisor_events(
+    limit: int = 100,
+):
+    return execution_supervisor.event_history(
+        limit=max(1, min(limit, 1000)),
+    )
+
+# PATCH C015.1R1 — Execution Analyzer API
+@router.get("/execution-analyzer")
+def get_execution_analyzer():
+    return execution_analyzer.status()
+
+
+@router.get("/execution-analyzer/latest")
+def get_execution_analyzer_latest():
+    return execution_analyzer.latest()
+
+
+@router.get("/execution-analyzer/history")
+def get_execution_analyzer_history(
+    limit: int = 100,
+):
+    return execution_analyzer.history(
+        limit=max(1, min(limit, 500)),
+    )
+
+
+@router.get("/execution-analyzer/events")
+def get_execution_analyzer_events(
+    limit: int = 100,
+):
+    return execution_analyzer.event_history(
+        limit=max(1, min(limit, 2000)),
+    )
+
+# PATCH C015.2R1 — Thermal Performance Analyzer API
+@router.get("/thermal-performance-analyzer")
+def get_thermal_performance_analyzer():
+    return thermal_performance_analyzer.status()
+
+
+@router.get("/thermal-performance-analyzer/latest")
+def get_thermal_performance_analyzer_latest():
+    return thermal_performance_analyzer.latest()
+
+
+@router.get("/thermal-performance-analyzer/history")
+def get_thermal_performance_analyzer_history(
+    limit: int = 100,
+):
+    return thermal_performance_analyzer.history(
+        limit=max(1, min(limit, 500)),
+    )
+
+
+@router.get("/thermal-performance-analyzer/events")
+def get_thermal_performance_analyzer_events(
+    limit: int = 100,
+):
+    return thermal_performance_analyzer.event_history(
+        limit=max(1, min(limit, 1000)),
+    )
+
+
+@router.post("/thermal-performance-analyzer/analyze")
+def analyze_thermal_performance():
+    return thermal_performance_analyzer.analyze(
+        trigger="api.manual",
+    )
+
+# PATCH C015.3R1 — Brain Feedback API
+@router.get("/brain-feedback")
+def get_brain_feedback():
+    return brain_feedback.status()
+
+
+@router.get("/brain-feedback/latest")
+def get_brain_feedback_latest():
+    return brain_feedback.latest()
+
+
+@router.get("/brain-feedback/history")
+def get_brain_feedback_history(
+    limit: int = 100,
+):
+    return brain_feedback.history(
+        limit=max(
+            1,
+            min(limit, 1000),
+        ),
+    )
+
+
+@router.get("/brain-feedback/database-history")
+def get_brain_feedback_database_history(
+    limit: int = 100,
+):
+    return brain_feedback.database_history(
+        limit=max(
+            1,
+            min(limit, 1000),
+        ),
+    )
+
+# PATCH C016.0R1 — Operational Certification API
+@router.get("/system-certification")
+def get_system_certification():
+    certification = (
+        operational_certification.evaluate(
+            trigger="http:get"
+        )
+    )
+
+    return certification
+
+
+@router.get("/system-certification/latest")
+def get_system_certification_latest():
+    return operational_certification.latest()
+
+
+@router.get("/system-certification/history")
+def get_system_certification_history(
+    limit: int = 100,
+):
+    return operational_certification.history(
+        limit=max(
+            1,
+            min(limit, 500),
+        )
+    )
+
+
+@router.post("/system-certification/evaluate")
+def evaluate_system_certification():
+    return operational_certification.evaluate(
+        trigger="http:post"
+    )
+
+# PATCH C016.1R1 — Sensor MQTT Discovery API
+@router.get("/sensor-mqtt-discovery")
+def get_sensor_mqtt_discovery():
+    return sensor_mqtt_discovery.status()
+
+
+@router.get("/sensor-mqtt-discovery/latest")
+def get_sensor_mqtt_discovery_latest():
+    return sensor_mqtt_discovery.latest()
+
+
+@router.get("/sensor-mqtt-discovery/sensors")
+def get_sensor_mqtt_discovery_sensors():
+    return sensor_mqtt_discovery.sensors()
+
+
+@router.get("/sensor-mqtt-discovery/topics")
+def get_sensor_mqtt_discovery_topics(
+    limit: int = 500,
+):
+    return sensor_mqtt_discovery.topics(
+        limit=limit
+    )
+
+
+@router.get("/sensor-mqtt-discovery/history")
+def get_sensor_mqtt_discovery_history(
+    limit: int = 100,
+):
+    return sensor_mqtt_discovery.history(
+        limit=limit
+    )
+
+
+@router.post("/sensor-mqtt-discovery/evaluate")
+def evaluate_sensor_mqtt_discovery():
+    return sensor_mqtt_discovery.evaluate(
+        trigger="http:post"
+    )
+
+# PATCH C016.1R2 — Sensor Validation API
+@router.get("/sensor-validation")
+def get_sensor_validation(): return sensor_validation.status()
+
+@router.get("/sensor-validation/latest")
+def get_sensor_validation_latest(): return sensor_validation.latest()
+
+@router.get("/sensor-validation/sensors")
+def get_sensor_validation_sensors(): return sensor_validation.sensors()
+
+@router.get("/sensor-validation/sensors/{sensor_id}/history")
+def get_sensor_validation_sensor_history(sensor_id: str, limit: int = 100): return sensor_validation.sensor_history(sensor_id,limit=limit)
+
+@router.get("/sensor-validation/history")
+def get_sensor_validation_history(limit: int = 100): return sensor_validation.history(limit=limit)
+
+@router.post("/sensor-validation/evaluate")
+def evaluate_sensor_validation(): return sensor_validation.evaluate(trigger="http:post")
+

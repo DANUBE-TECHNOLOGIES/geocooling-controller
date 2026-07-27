@@ -1,0 +1,27 @@
+{
+  "class": "GeoCoolingPredictor",
+  "methods": [
+    "__init__",
+    "_parse_horizons",
+    "_number",
+    "_clamp",
+    "_measured_trend",
+    "_model_trend",
+    "predict",
+    "configuration"
+  ],
+  "public_methods": [
+    "predict",
+    "configuration"
+  ],
+  "selected_method": "predict",
+  "first_route": {
+    "function_name": "get_status",
+    "function_line": 76,
+    "decorator_start_line": 75,
+    "decorator_end_line": 75,
+    "decorator_expressions": [
+      "router.get('/status')"
+    ]
+  }
+}

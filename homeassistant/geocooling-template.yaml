@@ -1,0 +1,54 @@
+# À inclure dans configuration.yaml avec :
+# template: !include geocooling-template.yaml
+- sensor:
+    - name: GeoCooling Brain Decision
+      unique_id: geocooling_brain_decision
+      state: "{{ state_attr('sensor.geocooling_controller', 'brain_decision') }}"
+    - name: GeoCooling Brain Confidence
+      unique_id: geocooling_brain_confidence
+      unit_of_measurement: "%"
+      state: "{{ state_attr('sensor.geocooling_controller', 'brain_confidence') }}"
+    - name: GeoCooling Data Quality
+      unique_id: geocooling_data_quality
+      unit_of_measurement: "%"
+      state: "{{ state_attr('sensor.geocooling_controller', 'brain_data_quality') }}"
+    - name: GeoCooling Temperature intérieure
+      unique_id: geocooling_indoor_temperature
+      device_class: temperature
+      unit_of_measurement: "°C"
+      state: "{{ state_attr('sensor.geocooling_controller', 'indoor_temperature_c') }}"
+    - name: GeoCooling Humidité intérieure
+      unique_id: geocooling_indoor_humidity
+      device_class: humidity
+      unit_of_measurement: "%"
+      state: "{{ state_attr('sensor.geocooling_controller', 'indoor_humidity_percent') }}"
+    - name: GeoCooling Marge condensation
+      unique_id: geocooling_condensation_margin
+      unit_of_measurement: "°C"
+      state: "{{ state_attr('sensor.geocooling_controller', 'condensation_margin_c') }}"
+    - name: GeoCooling Prévision 1h
+      unique_id: geocooling_prediction_1h
+      device_class: temperature
+      unit_of_measurement: "°C"
+      state: "{{ state_attr('sensor.geocooling_controller', 'predicted_temperature_1h_c') }}"
+    - name: GeoCooling Prévision 3h
+      unique_id: geocooling_prediction_3h
+      device_class: temperature
+      unit_of_measurement: "°C"
+      state: "{{ state_attr('sensor.geocooling_controller', 'predicted_temperature_3h_c') }}"
+    - name: GeoCooling Prévision 6h
+      unique_id: geocooling_prediction_6h
+      device_class: temperature
+      unit_of_measurement: "°C"
+      state: "{{ state_attr('sensor.geocooling_controller', 'predicted_temperature_6h_c') }}"
+  - binary_sensor:
+    - name: GeoCooling Pompe
+      unique_id: geocooling_pump
+      state: "{{ state_attr('sensor.geocooling_controller', 'pump_running') | bool }}"
+    - name: GeoCooling Vanne
+      unique_id: geocooling_valve
+      state: "{{ state_attr('sensor.geocooling_controller', 'valve_open') | bool }}"
+    - name: GeoCooling Sécurité
+      unique_id: geocooling_safety
+      state: "{{ not (state_attr('sensor.geocooling_controller', 'safety_safe') | bool) }}"
+      device_class: problem

@@ -1,0 +1,52 @@
+# À inclure dans configuration.yaml avec :
+# rest: !include geocooling-rest.yaml
+- resource: http://192.168.10.120:8000/geocooling/home-assistant
+  scan_interval: 30
+  timeout: 10
+  sensor:
+    - name: GeoCooling Controller
+      unique_id: geocooling_controller
+      value_template: "{{ value_json.state }}"
+      json_attributes:
+        - mode
+        - driver_name
+        - simulation
+        - valve_open
+        - pump_running
+        - runtime_seconds
+        - cycle_count
+        - last_event
+        - last_reason
+        - last_error
+        - device_ready
+        - safety_safe
+        - safety_reason
+        - dew_point_c
+        - condensation_margin_c
+        - indoor_temperature_c
+        - indoor_humidity_percent
+        - outdoor_temperature_c
+        - surface_temperature_c
+        - floor_supply_temperature_c
+        - floor_return_temperature_c
+        - source_inlet_temperature_c
+        - source_outlet_temperature_c
+        - flow_rate_l_min
+        - cooling_power_kw
+        - brain_decision
+        - brain_confidence
+        - brain_total_score
+        - brain_comfort_score
+        - brain_cooling_score
+        - brain_risk_score
+        - brain_reason
+        - brain_data_quality
+        - brain_operating_mode
+        - recommended_runtime_minutes
+        - predicted_temperature_1h_c
+        - predicted_temperature_3h_c
+        - predicted_temperature_6h_c
+        - prediction_confidence
+        - prediction_method
+        - anti_short_cycle
+        - generated_at
