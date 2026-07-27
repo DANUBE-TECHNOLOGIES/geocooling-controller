@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.geocooling.adaptive_model import AdaptiveThermalModel
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -46,6 +48,7 @@ class ThermalEngine:
             0.0, float(os.getenv("GEOCOOLING_FLOW_RATE_L_MIN", "0"))
         )
         self._energy_kwh = 0.0
+        self.adaptive_model = AdaptiveThermalModel()
 
     @staticmethod
     def _finite_or_none(value: Any, name: str) -> float | None:
@@ -89,11 +92,30 @@ class ThermalEngine:
         with self._lock:
             previous = self._history[-1] if self._history else None
             self._history.append(snapshot)
+
             if previous is not None:
-                dt_h = max(0.0, (snapshot.timestamp - previous.timestamp).total_seconds() / 3600.0)
+                dt_h = max(
+                    0.0,
+                    (
+                        snapshot.timestamp
+                        - previous.timestamp
+                    ).total_seconds()
+                    / 3600.0,
+                )
+
                 power_kw = self._power_kw(snapshot)
+
                 if dt_h > 0 and power_kw is not None:
-                    self._energy_kwh += max(0.0, power_kw) * dt_h
+                    self._energy_kwh += (
+                        max(0.0, power_kw)
+                        * dt_h
+                    )
+
+                self.adaptive_model.observe(
+                    previous=previous,
+                    current=snapshot,
+                    cooling_power_kw=power_kw,
+                )
         return self.metrics()
 
     def latest(self) -> ThermalSnapshot | None:
@@ -149,6 +171,7 @@ class ThermalEngine:
                 "reason": "Aucune mesure thermique reçue",
                 "history_count": 0,
                 "energy_transferred_kwh": round(self._energy_kwh, 3),
+                "adaptive_model": self.adaptive_model.status(),
             }
 
         floor_delta = None
@@ -174,6 +197,7 @@ class ThermalEngine:
                 "surface_30m": self._trend("surface_temperature_c", 30),
                 "outdoor_30m": self._trend("outdoor_temperature_c", 30),
             },
+            "adaptive_model": self.adaptive_model.status(),
             "configuration": {
                 "default_flow_rate_l_min": self.default_flow_rate_l_min,
                 "history_capacity": self._history.maxlen,

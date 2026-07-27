@@ -121,30 +121,138 @@ class GeoCoolingPredictor:
         labels = ", ".join(label for _, _, label in candidates)
         return trend, confidence, [f"Prévision basée sur {labels}"]
 
-    def _model_trend(self, thermal: dict[str, Any], state: str) -> tuple[float | None, list[str]]:
+    def _model_trend(
+        self,
+        thermal: dict[str, Any],
+        state: str,
+    ) -> tuple[float | None, list[str]]:
         latest = thermal.get("latest") or {}
-        indoor = self._number(latest.get("indoor_temperature_c"))
-        outdoor = self._number(latest.get("outdoor_temperature_c"))
-        power_kw = self._number(thermal.get("cooling_power_kw"))
+        adaptive = thermal.get("adaptive_model") or {}
+
+        indoor = self._number(
+            latest.get("indoor_temperature_c")
+        )
+        outdoor = self._number(
+            latest.get("outdoor_temperature_c")
+        )
+        power_kw = self._number(
+            thermal.get("cooling_power_kw")
+        )
 
         if indoor is None:
             return None, []
 
+        adaptive_available = bool(
+            adaptive.get("available", False)
+        )
+        adaptive_confidence = int(
+            self._number(
+                adaptive.get("confidence")
+            )
+            or 0
+        )
+
+        learned_exchange = self._number(
+            adaptive.get(
+                "passive_exchange_rate_per_hour"
+            )
+        )
+        learned_capacity = self._number(
+            adaptive.get(
+                "house_thermal_capacity_kwh_per_c"
+            )
+        )
+        learned_active_rate = self._number(
+            adaptive.get(
+                "active_cooling_rate_c_per_hour"
+            )
+        )
+
+        exchange_rate = (
+            learned_exchange
+            if (
+                adaptive_available
+                and learned_exchange is not None
+            )
+            else self.passive_exchange_rate_per_hour
+        )
+
+        capacity = (
+            learned_capacity
+            if (
+                adaptive_available
+                and learned_capacity is not None
+            )
+            else self.house_thermal_capacity_kwh_per_c
+        )
+
         passive = 0.0
         reasons: list[str] = []
-        if outdoor is not None:
-            passive = (outdoor - indoor) * self.passive_exchange_rate_per_hour
-            reasons.append(
-                f"Échange passif estimé avec extérieur à {outdoor:.1f} °C"
-            )
 
-        running = state == "RUNNING" or bool(latest.get("pump_running", False))
-        cooling = 0.0
-        if running and power_kw is not None and power_kw > 0:
-            cooling = power_kw / self.house_thermal_capacity_kwh_per_c
-            reasons.append(
-                f"Effet du GeoCooling estimé avec {power_kw:.2f} kW"
+        if outdoor is not None:
+            passive = (
+                outdoor
+                - indoor
+            ) * exchange_rate
+
+            if (
+                adaptive_available
+                and learned_exchange is not None
+            ):
+                reasons.append(
+                    "Échange passif issu du modèle "
+                    f"adaptatif ({adaptive_confidence} %)"
+                )
+            else:
+                reasons.append(
+                    "Échange passif estimé avec "
+                    f"extérieur à {outdoor:.1f} °C"
+                )
+
+        running = (
+            state == "RUNNING"
+            or bool(
+                latest.get(
+                    "pump_running",
+                    False,
+                )
             )
+        )
+
+        cooling = 0.0
+
+        if running:
+            if (
+                adaptive_available
+                and learned_active_rate is not None
+                and adaptive_confidence >= 40
+            ):
+                cooling = max(
+                    0.0,
+                    learned_active_rate,
+                )
+
+                reasons.append(
+                    "Effet GeoCooling appris "
+                    f"({cooling:.3f} °C/h)"
+                )
+
+            elif power_kw is not None and power_kw > 0:
+                cooling = power_kw / capacity
+
+                if (
+                    adaptive_available
+                    and learned_capacity is not None
+                ):
+                    reasons.append(
+                        "Capacité thermique apprise : "
+                        f"{capacity:.2f} kWh/°C"
+                    )
+                else:
+                    reasons.append(
+                        "Effet du GeoCooling estimé "
+                        f"avec {power_kw:.2f} kW"
+                    )
 
         return passive - cooling, reasons
 
