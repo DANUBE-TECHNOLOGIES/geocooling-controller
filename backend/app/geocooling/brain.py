@@ -12,6 +12,7 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+from app.geocooling.capabilities import GeoCoolingCapabilities
 @dataclass(frozen=True, slots=True)
 class BrainDecision:
     decision: str
@@ -224,50 +225,15 @@ class GeoCoolingBrain:
         predicted_3h = prediction_by_horizon.get(180)
         predicted_6h = prediction_by_horizon.get(360)
 
-        required_fields = (
-            latest.get("indoor_temperature_c"),
-            latest.get("indoor_humidity_percent"),
-            latest.get("outdoor_temperature_c"),
+        capabilities = GeoCoolingCapabilities.from_latest(
+            latest,
+            number_parser=self._number,
         )
-        optional_fields = (
-            latest.get("surface_temperature_c"),
-            latest.get("floor_supply_temperature_c"),
-            latest.get("floor_return_temperature_c"),
-            latest.get("source_inlet_temperature_c"),
-            latest.get("source_outlet_temperature_c"),
-            latest.get("flow_rate_l_min"),
-        )
-        required_available = sum(self._number(value) is not None for value in required_fields)
-        optional_available = sum(self._number(value) is not None for value in optional_fields)
+
         data_quality = self._clamp(
-            required_available / len(required_fields) * 70.0
-            + optional_available / len(optional_fields) * 30.0
+            capabilities.data_quality
         )
-        # Le Brain distingue désormais la disponibilité des mesures
-        # bâtiment de celle des sondes hydrauliques.
-        #
-        # FULL :
-        #   les trois mesures bâtiment sont disponibles et au moins quatre
-        #   mesures hydrauliques ou thermiques complémentaires sont présentes.
-        #
-        # BUILDING_ONLY :
-        #   température intérieure, humidité intérieure et température
-        #   extérieure sont disponibles. Le Brain peut donc prendre une
-        #   décision bâtiment fiable, même sans instrumentation hydraulique.
-        #
-        # LIMITED :
-        #   seulement deux mesures bâtiment sont disponibles.
-        #
-        # INSUFFICIENT_DATA :
-        #   moins de deux mesures bâtiment sont exploitables.
-        if required_available == len(required_fields) and optional_available >= 4:
-            operating_mode = "FULL"
-        elif required_available == len(required_fields):
-            operating_mode = "BUILDING_ONLY"
-        elif required_available >= 2:
-            operating_mode = "LIMITED"
-        else:
-            operating_mode = "INSUFFICIENT_DATA"
+        operating_mode = capabilities.operating_mode
 
         comfort_score, comfort_reasons = self._comfort_score(latest)
         cooling_score, cooling_reasons = self._cooling_score(thermal)
