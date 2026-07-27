@@ -1,0 +1,33 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# Environnements et secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Données locales
+data/
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+# Sauvegardes et archives
+backups/
+backup/
+*.tar
+*.tar.gz
+*.zip
+# IDE / système
+.DS_Store
+.vscode/
+.idea/

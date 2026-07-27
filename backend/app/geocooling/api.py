@@ -27,6 +27,8 @@ from app.geocooling.sensor_mqtt_discovery import SensorMQTTDiscovery
 from app.geocooling.sensor_validation import SensorValidationEngine
 from app.geocooling.mqtt_preflight import MQTTPreflightCertification
 from app.geocooling.hardware_certification import HardwareCertificationEngine
+from app.geocooling.digital_twin import GeoCoolingDigitalTwin
+from app.geocooling.water_test_framework import GeoCoolingWaterTestFramework, WaterTestError
 
 router = APIRouter(prefix="/geocooling", tags=["GeoCooling"])
 controller = GeoCoolingController()
@@ -366,6 +368,20 @@ setattr(
     "hardware_certification",
     hardware_certification,
 )
+
+# RELEASE 0.7.0 — Digital Twin + Water Test Framework
+digital_twin = GeoCoolingDigitalTwin(
+    controller=controller,
+    event_bus=getattr(controller, "event_bus", None),
+)
+setattr(controller, "digital_twin", digital_twin)
+
+water_test_framework = GeoCoolingWaterTestFramework(
+    controller=controller,
+    digital_twin=digital_twin,
+    event_bus=getattr(controller, "event_bus", None),
+)
+setattr(controller, "water_test_framework", water_test_framework)
 @router.get("/status")
 def get_status() -> dict:
     return controller.status()
@@ -1435,4 +1451,109 @@ def evaluate_hardware_certification():
     return hardware_certification.evaluate(
         trigger="http:post"
     )
+
+# RELEASE 0.7.0 — Digital Twin API
+@router.get("/digital-twin")
+def get_digital_twin():
+    return digital_twin.status()
+
+
+@router.get("/digital-twin/snapshot")
+def get_digital_twin_snapshot(refresh: bool = True):
+    return digital_twin.snapshot(refresh=refresh)
+
+
+@router.post("/digital-twin/refresh")
+def refresh_digital_twin():
+    return digital_twin.refresh(trigger="http:post")
+
+
+# RELEASE 0.7.0 — Water Test Framework API
+@router.get("/water-test")
+def get_water_test_status():
+    return water_test_framework.status()
+
+
+@router.get("/water-test/scenarios")
+def get_water_test_scenarios():
+    return water_test_framework.scenarios()
+
+
+@router.get("/water-test/session")
+def get_water_test_session(session_id: str | None = None):
+    try:
+        return water_test_framework.session(session_id)
+    except WaterTestError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/water-test/history")
+def get_water_test_history(limit: int = Query(default=100, ge=1, le=1000)):
+    return water_test_framework.history(limit=limit)
+
+
+@router.get("/water-test/report/{session_id}")
+def get_water_test_report(session_id: str):
+    try:
+        return water_test_framework.report(session_id)
+    except WaterTestError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/water-test/create")
+def create_water_test(payload: dict[str, Any] = Body(...)):
+    try:
+        return water_test_framework.create(
+            scenario_id=str(payload.get("scenario_id", "")),
+            operator=str(payload.get("operator", "")),
+            notes=str(payload.get("notes", "")),
+        )
+    except WaterTestError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/water-test/start")
+def start_water_test(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    try:
+        return water_test_framework.start(session_id=payload.get("session_id"))
+    except WaterTestError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/water-test/simulate-step")
+def simulate_water_test_step(payload: dict[str, Any] = Body(...)):
+    try:
+        return water_test_framework.simulate_step(
+            session_id=payload.get("session_id"),
+            action=str(payload.get("action", "")),
+            values=payload.get("values") or {},
+        )
+    except (WaterTestError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/water-test/finish")
+def finish_water_test(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    try:
+        return water_test_framework.finish(
+            session_id=payload.get("session_id"),
+            result=str(payload.get("result", "PASS")),
+            notes=str(payload.get("notes", "")),
+        )
+    except WaterTestError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/water-test/cancel")
+def cancel_water_test(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    try:
+        return water_test_framework.cancel(
+            session_id=payload.get("session_id"),
+            reason=str(payload.get("reason", "Annulation opérateur")),
+        )
+    except WaterTestError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
