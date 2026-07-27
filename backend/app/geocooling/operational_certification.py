@@ -999,7 +999,10 @@ class OperationalCertificationEngine:
                     passed=(
                         confidence is not None
                         and confidence >= 70
-                        and operating_mode != "DEGRADED"
+                        and operating_mode in {
+                            "FULL",
+                            "BUILDING_ONLY",
+                        }
                     ),
                     blocking_level="READY_FOR_AUTOMATIC_CONTROL",
                     observed={
@@ -1008,13 +1011,15 @@ class OperationalCertificationEngine:
                     },
                     expected={
                         "confidence": ">= 70",
-                        "operating_mode": (
-                            "non DEGRADED"
-                        ),
+                        "operating_mode": [
+                            "FULL",
+                            "BUILDING_ONLY",
+                        ],
                     },
                     remediation=(
-                        "Améliorer les données avant "
-                        "l'automatisation."
+                        "Rétablir au minimum la température intérieure, "
+                        "l'humidité intérieure et la température extérieure "
+                        "avant l'automatisation."
                     ),
                 ),
             ]

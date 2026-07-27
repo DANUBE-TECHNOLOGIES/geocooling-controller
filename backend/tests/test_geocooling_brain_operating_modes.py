@@ -1,0 +1,101 @@
+from app.geocooling.brain import GeoCoolingBrain
+
+
+def evaluate(
+    *,
+    indoor=None,
+    humidity=None,
+    outdoor=None,
+    optional=None,
+):
+    optional = optional or {}
+
+    latest = {
+        "indoor_temperature_c": indoor,
+        "indoor_humidity_percent": humidity,
+        "outdoor_temperature_c": outdoor,
+        "surface_temperature_c": optional.get("surface"),
+        "floor_supply_temperature_c": optional.get("floor_supply"),
+        "floor_return_temperature_c": optional.get("floor_return"),
+        "source_inlet_temperature_c": optional.get("source_inlet"),
+        "source_outlet_temperature_c": optional.get("source_outlet"),
+        "flow_rate_l_min": optional.get("flow"),
+        "pump_running": False,
+    }
+
+    brain = GeoCoolingBrain()
+
+    return brain._c0123r4_original_evaluate(
+        state="OFF",
+        thermal={
+            "available": True,
+            "latest": latest,
+            "cooling_power_kw": None,
+            "floor_delta_t_c": None,
+            "trends_c_per_hour": {},
+        },
+        safety={
+            "safe": True,
+            "margin_c": 5.0,
+        },
+        device={
+            "ready": True,
+        },
+        anti_short_cycle={},
+        prediction={},
+    )
+
+
+def test_building_only_with_three_building_measurements():
+    result = evaluate(
+        indoor=25.1,
+        humidity=46.3,
+        outdoor=26.8,
+    )
+
+    assert result.operating_mode == "BUILDING_ONLY"
+    assert result.data_quality == 70
+    assert result.confidence >= 0
+    assert any(
+        "Mode bâtiment uniquement" in reason
+        for reason in result.reason
+    )
+
+
+def test_full_with_sufficient_optional_measurements():
+    result = evaluate(
+        indoor=25.1,
+        humidity=46.3,
+        outdoor=26.8,
+        optional={
+            "surface": 22.4,
+            "floor_supply": 18.0,
+            "floor_return": 20.5,
+            "source_inlet": 12.3,
+        },
+    )
+
+    assert result.operating_mode == "FULL"
+    assert result.data_quality >= 90
+
+
+def test_limited_with_two_building_measurements():
+    result = evaluate(
+        indoor=25.1,
+        humidity=46.3,
+        outdoor=None,
+    )
+
+    assert result.operating_mode == "LIMITED"
+    assert result.data_quality == 47
+
+
+def test_insufficient_data_with_one_building_measurement():
+    result = evaluate(
+        indoor=25.1,
+        humidity=None,
+        outdoor=None,
+    )
+
+    assert result.operating_mode == "INSUFFICIENT_DATA"
+    assert result.data_quality == 23

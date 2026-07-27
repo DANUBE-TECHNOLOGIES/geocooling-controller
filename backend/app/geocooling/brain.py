@@ -243,7 +243,31 @@ class GeoCoolingBrain:
             required_available / len(required_fields) * 70.0
             + optional_available / len(optional_fields) * 30.0
         )
-        operating_mode = "FULL" if optional_available >= 4 else "DEGRADED"
+        # Le Brain distingue désormais la disponibilité des mesures
+        # bâtiment de celle des sondes hydrauliques.
+        #
+        # FULL :
+        #   les trois mesures bâtiment sont disponibles et au moins quatre
+        #   mesures hydrauliques ou thermiques complémentaires sont présentes.
+        #
+        # BUILDING_ONLY :
+        #   température intérieure, humidité intérieure et température
+        #   extérieure sont disponibles. Le Brain peut donc prendre une
+        #   décision bâtiment fiable, même sans instrumentation hydraulique.
+        #
+        # LIMITED :
+        #   seulement deux mesures bâtiment sont disponibles.
+        #
+        # INSUFFICIENT_DATA :
+        #   moins de deux mesures bâtiment sont exploitables.
+        if required_available == len(required_fields) and optional_available >= 4:
+            operating_mode = "FULL"
+        elif required_available == len(required_fields):
+            operating_mode = "BUILDING_ONLY"
+        elif required_available >= 2:
+            operating_mode = "LIMITED"
+        else:
+            operating_mode = "INSUFFICIENT_DATA"
 
         comfort_score, comfort_reasons = self._comfort_score(latest)
         cooling_score, cooling_reasons = self._cooling_score(thermal)
@@ -317,8 +341,29 @@ class GeoCoolingBrain:
         else:
             recommended_runtime_minutes = 0
 
-        if operating_mode == "DEGRADED":
-            reasons.append("Mode dégradé : sondes hydrauliques incomplètes")
+        confidence_penalties = {
+            "FULL": 0,
+            "BUILDING_ONLY": 3,
+            "LIMITED": 15,
+            "INSUFFICIENT_DATA": 40,
+        }
+
+        confidence = self._clamp(
+            confidence - confidence_penalties[operating_mode]
+        )
+
+        if operating_mode == "BUILDING_ONLY":
+            reasons.append(
+                "Mode bâtiment uniquement : mesures hydrauliques incomplètes"
+            )
+        elif operating_mode == "LIMITED":
+            reasons.append(
+                "Mode limité : une mesure bâtiment essentielle est absente"
+            )
+        elif operating_mode == "INSUFFICIENT_DATA":
+            reasons.append(
+                "Données bâtiment insuffisantes pour une décision fiable"
+            )
 
         # Déduplication stable pour garder une réponse lisible.
         unique_reasons = tuple(dict.fromkeys(reason for reason in reasons if reason))

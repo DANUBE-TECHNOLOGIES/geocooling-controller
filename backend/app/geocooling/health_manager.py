@@ -415,8 +415,28 @@ class GeoCoolingHealthManager:
             message = "Décision Brain absente."
 
         else:
-            level = "OK"
-            message = "Brain opérationnel."
+            operating_mode = str(
+                brain.get("operating_mode") or ""
+            ).upper()
+
+            if operating_mode == "INSUFFICIENT_DATA":
+                level = "WARNING"
+                message = (
+                    "Brain disponible mais données bâtiment insuffisantes."
+                )
+            elif operating_mode == "LIMITED":
+                level = "WARNING"
+                message = (
+                    "Brain opérationnel avec mesures bâtiment partielles."
+                )
+            elif operating_mode == "BUILDING_ONLY":
+                level = "OK"
+                message = (
+                    "Brain opérationnel en mode bâtiment uniquement."
+                )
+            else:
+                level = "OK"
+                message = "Brain opérationnel."
 
         return self._component(
             status=level,
