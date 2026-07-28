@@ -14,6 +14,7 @@ def utc_now() -> datetime:
 
 from app.geocooling.capabilities import GeoCoolingCapabilities
 from app.geocooling.decision_context import GeoCoolingDecisionContext
+from app.geocooling.operating_mode_tracker import OperatingModeTracker
 @dataclass(frozen=True, slots=True)
 class BrainDecision:
     decision: str
@@ -63,6 +64,18 @@ class GeoCoolingBrain:
         self.minimum_safe_margin_c = max(
             0.0,
             float(os.getenv("GEOCOOLING_MIN_DEW_POINT_MARGIN_C", "3.0")),
+        )
+        self.operating_mode_degradation_cycles = max(
+            1,
+            int(os.getenv("GEOCOOLING_MODE_DEGRADATION_CYCLES", "2")),
+        )
+        self.operating_mode_recovery_cycles = max(
+            1,
+            int(os.getenv("GEOCOOLING_MODE_RECOVERY_CYCLES", "3")),
+        )
+        self._operating_mode_tracker = OperatingModeTracker(
+            degradation_cycles=self.operating_mode_degradation_cycles,
+            recovery_cycles=self.operating_mode_recovery_cycles,
         )
 
     @staticmethod
@@ -245,7 +258,11 @@ class GeoCoolingBrain:
         data_quality = self._clamp(
             capabilities.data_quality
         )
-        operating_mode = capabilities.operating_mode
+        observed_operating_mode = capabilities.operating_mode
+        mode_transition = self._operating_mode_tracker.observe(
+            observed_operating_mode
+        )
+        operating_mode = mode_transition.effective_mode
 
         comfort_score, comfort_reasons = self._comfort_score(latest)
         cooling_score, cooling_reasons = self._cooling_score(thermal)
@@ -276,6 +293,20 @@ class GeoCoolingBrain:
             100,
         )
         reasons = comfort_reasons + cooling_reasons + risk_reasons
+
+        if mode_transition.changed and mode_transition.previous_mode is not None:
+            reasons.append(
+                "Mode de capacité : "
+                f"{mode_transition.previous_mode} → {operating_mode} "
+                f"({mode_transition.reason.lower()})"
+            )
+        elif observed_operating_mode != operating_mode:
+            reasons.append(
+                "Mode observé "
+                f"{observed_operating_mode} en attente de confirmation "
+                f"({mode_transition.pending_cycles}/"
+                f"{mode_transition.required_cycles})"
+            )
 
         if risk_score >= 80 or context.blocked_by_infrastructure:
             decision = "BLOCKED"
@@ -406,6 +437,12 @@ class GeoCoolingBrain:
             "stop_temperature_c": self.stop_temperature_c,
             "minimum_cooling_power_kw": self.minimum_cooling_power_kw,
             "minimum_safe_margin_c": self.minimum_safe_margin_c,
+            "operating_mode_degradation_cycles": (
+                self.operating_mode_degradation_cycles
+            ),
+            "operating_mode_recovery_cycles": (
+                self.operating_mode_recovery_cycles
+            ),
             "advisory_only": True,
         }
 
