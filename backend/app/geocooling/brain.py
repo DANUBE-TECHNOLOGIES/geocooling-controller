@@ -255,8 +255,23 @@ class GeoCoolingBrain:
         remaining_off = context.remaining_minimum_off_seconds
         remaining_on = context.remaining_minimum_on_seconds
 
+        # Le score doit refléter les capacités réellement disponibles.
+        # En mode BUILDING_ONLY, un score hydraulique nul signifie
+        # « non mesuré » et non « absence de capacité frigorifique ».
+        if operating_mode == "FULL":
+            decision_score = (
+                comfort_score * 0.60
+                + cooling_score * 0.40
+            )
+        elif operating_mode == "BUILDING_ONLY":
+            decision_score = float(comfort_score)
+        elif operating_mode == "LIMITED":
+            decision_score = comfort_score * 0.85
+        else:
+            decision_score = 0.0
+
         total_score = self._clamp(
-            comfort_score * 0.60 + cooling_score * 0.40 - risk_score * 0.80,
+            decision_score - risk_score * 0.80,
             -100,
             100,
         )
@@ -265,6 +280,25 @@ class GeoCoolingBrain:
         if risk_score >= 80 or context.blocked_by_infrastructure:
             decision = "BLOCKED"
             confidence = max(90, risk_score)
+        elif operating_mode == "INSUFFICIENT_DATA":
+            if running and remaining_on > 0:
+                decision = "MAINTAIN"
+                confidence = 90
+                reasons.append(
+                    f"Durée minimale de marche : {remaining_on} seconde(s) restantes"
+                )
+            elif running:
+                decision = "STOP"
+                confidence = 90
+                reasons.append(
+                    "Arrêt recommandé : données bâtiment insuffisantes"
+                )
+            else:
+                decision = "WAIT"
+                confidence = 95
+                reasons.append(
+                    "Démarrage interdit : données bâtiment insuffisantes"
+                )
         elif not context.thermal_available:
             decision = "WAIT"
             confidence = 100
@@ -298,7 +332,10 @@ class GeoCoolingBrain:
                 )
             elif (
                 indoor is not None
-                and total_score >= 35
+                and (
+                    operating_mode == "BUILDING_ONLY"
+                    or total_score >= 35
+                )
                 and (
                     indoor >= self.start_temperature_c
                     or (predicted_3h is not None and predicted_3h >= self.start_temperature_c)

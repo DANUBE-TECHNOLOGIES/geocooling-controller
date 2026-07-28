@@ -99,3 +99,31 @@ def test_insufficient_data_with_one_building_measurement():
 
     assert result.operating_mode == "INSUFFICIENT_DATA"
     assert result.data_quality == 23
+
+
+def test_building_only_can_start_at_configured_temperature_threshold():
+    result = evaluate(
+        indoor=25.1,
+        humidity=46.3,
+        outdoor=26.8,
+    )
+
+    assert result.operating_mode == "BUILDING_ONLY"
+    assert result.decision == "START"
+    assert result.total_score == result.comfort_score
+
+
+def test_insufficient_data_never_starts_when_system_is_off():
+    result = evaluate(
+        indoor=28.0,
+        humidity=None,
+        outdoor=None,
+    )
+
+    assert result.operating_mode == "INSUFFICIENT_DATA"
+    assert result.decision == "WAIT"
+    assert result.recommended_runtime_minutes == 0
+    assert any(
+        "Démarrage interdit" in reason
+        for reason in result.reason
+    )
