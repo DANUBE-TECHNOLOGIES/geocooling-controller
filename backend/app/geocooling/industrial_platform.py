@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.geocooling.brain_v4 import GeoCoolingBrainV4
+
 import copy
 import json
 import os
@@ -206,6 +208,7 @@ class GeoCoolingIndustrialPlatform:
         self.pre_certification = GeoCoolingFieldPreCertification()
         self.safety = GeoCoolingSafetyManager(self.hardware, self.events)
         self.brain_v3 = GeoCoolingBrainAdvisorV3()
+        self.brain_v4 = GeoCoolingBrainV4()
         self.commissioning = GeoCoolingCommissioningEngine(self)
 
     def diagnostics(self) -> dict[str, Any]:
