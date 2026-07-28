@@ -59,3 +59,36 @@ def test_safe_mode_persists(tmp_path: Path):
     assert second.status()["active"] is True
     second.clear("pytest")
     assert second.status()["active"] is False
+
+from app.geocooling.industrial_hardening import GeoCoolingLifecycleRegistry
+
+
+def test_transaction_history_persists(tmp_path: Path):
+    path = tmp_path / "transactions.jsonl"
+    first = GeoCoolingTransactionManager(path=str(path))
+    first.execute("persisted", [TransactionStep("one", lambda: None)])
+    second = GeoCoolingTransactionManager(path=str(path))
+    assert second.status()["transactions"] == 1
+    assert second.history()[0]["name"] == "persisted"
+
+
+def test_lifecycle_transitions_and_persists(tmp_path: Path):
+    path = tmp_path / "lifecycle.json"
+    first = GeoCoolingLifecycleRegistry(str(path))
+    first.transition("controller", "INIT", reason="boot")
+    first.transition("controller", "READY", reason="ok")
+    snapshot = first.snapshot()
+    assert snapshot["components"][0]["state"] == "READY"
+    second = GeoCoolingLifecycleRegistry(str(path))
+    assert second.snapshot()["restart_detected"] is True
+    assert second.snapshot()["components"][0]["state"] == "READY"
+
+
+def test_lifecycle_rejects_unknown_state(tmp_path: Path):
+    registry = GeoCoolingLifecycleRegistry(str(tmp_path / "lifecycle.json"))
+    try:
+        registry.transition("controller", "UNKNOWN", reason="bad")
+    except ValueError as exc:
+        assert "Unsupported lifecycle state" in str(exc)
+    else:
+        raise AssertionError("ValueError expected")
