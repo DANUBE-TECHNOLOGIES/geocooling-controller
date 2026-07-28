@@ -10,6 +10,7 @@ from app.geocooling.operational_orchestrator import GeoCoolingOperationalOrchest
 from app.geocooling.physical_thermal_model import GeoCoolingPhysicalThermalModel
 from app.geocooling.thermal_model_learning import GeoCoolingThermalModelLearning
 from app.geocooling.thermal_model_validation import GeoCoolingThermalModelValidation
+from app.geocooling.energy_optimizer import GeoCoolingEnergyOptimizer
 
 import copy
 import json
@@ -228,6 +229,7 @@ class GeoCoolingIndustrialPlatform:
         self.physical_thermal_model = GeoCoolingPhysicalThermalModel()
         self.thermal_model_learning = GeoCoolingThermalModelLearning(self.physical_thermal_model)
         self.thermal_model_validation = GeoCoolingThermalModelValidation(self.physical_thermal_model, self.thermal_model_learning)
+        self.energy_optimizer = GeoCoolingEnergyOptimizer(self.physical_thermal_model, self.thermal_model_validation)
         self.commissioning = GeoCoolingCommissioningEngine(self)
 
     def diagnostics(self) -> dict[str, Any]:

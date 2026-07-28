@@ -2375,3 +2375,30 @@ def post_industrial_platform_thermal_model_validation_predict(payload: dict[str,
         return industrial_platform.thermal_model_validation.predict(payload)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# SPRINT H020 — 24 h energy optimization and daily assessment
+@router.get("/industrial-platform/energy-optimizer")
+def get_industrial_platform_energy_optimizer():
+    return industrial_platform.energy_optimizer.status()
+
+
+@router.post("/industrial-platform/energy-optimizer/optimize")
+def post_industrial_platform_energy_optimize(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.energy_optimizer.optimize(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/industrial-platform/energy-optimizer/assess")
+def post_industrial_platform_energy_assess(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.energy_optimizer.assess(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/industrial-platform/energy-optimizer/assessments")
+def get_industrial_platform_energy_assessments(limit: int = Query(default=20, ge=1, le=100)):
+    return industrial_platform.energy_optimizer.assessments(limit)
