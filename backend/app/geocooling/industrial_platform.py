@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.geocooling.brain_v4 import GeoCoolingBrainV4
 from app.geocooling.operational_advisory import GeoCoolingOperationalAdvisor, GeoCoolingTelemetryHub
 from app.geocooling.data_quality import GeoCoolingSensorQualityManager
+from app.geocooling.operational_confidence import GeoCoolingOperationalConfidenceManager
 
 import copy
 import json
@@ -214,6 +215,7 @@ class GeoCoolingIndustrialPlatform:
         self.data_quality = GeoCoolingSensorQualityManager(self.events)
         self.telemetry = GeoCoolingTelemetryHub(self.brain_v4, self.events, quality_manager=self.data_quality)
         self.operational_advisor = GeoCoolingOperationalAdvisor()
+        self.operational_confidence = GeoCoolingOperationalConfidenceManager(self.events)
         self.commissioning = GeoCoolingCommissioningEngine(self)
 
     def diagnostics(self) -> dict[str, Any]:

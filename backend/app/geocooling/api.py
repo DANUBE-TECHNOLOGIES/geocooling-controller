@@ -2114,6 +2114,19 @@ def get_industrial_platform_operational_plan():
     )
 
 
+@router.get("/industrial-platform/operational-confidence")
+def get_industrial_platform_operational_confidence():
+    telemetry = industrial_platform.telemetry.status()
+    quality = industrial_platform.data_quality.assess(telemetry.get("latest"), telemetry.get("previous"))
+    hardware = industrial_platform.hardware.status()
+    return industrial_platform.operational_confidence.evaluate(
+        latest=telemetry.get("latest"),
+        previous=telemetry.get("previous"),
+        quality=quality,
+        physical_mode=not bool(hardware.get("simulation", True)),
+    )
+
+
 @router.get("/industrial-platform/commissioning")
 def get_industrial_platform_commissioning():
     return industrial_platform.commissioning.status()
