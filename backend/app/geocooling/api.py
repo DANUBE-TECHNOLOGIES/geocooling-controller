@@ -2206,3 +2206,34 @@ def get_industrial_platform_operational_availability():
 @router.get("/industrial-platform/operational-availability/history")
 def get_industrial_platform_operational_availability_history(limit: int = Query(default=20, ge=1, le=100)):
     return industrial_platform.operational_availability.history(limit)
+
+# SPRINT H015 — restart continuity and persisted-state integrity
+@router.get("/industrial-platform/operational-continuity")
+def get_industrial_platform_operational_continuity():
+    telemetry = industrial_platform.telemetry.status()
+    quality = industrial_platform.data_quality.assess(telemetry.get("latest"), telemetry.get("previous"))
+    hardware = industrial_platform.hardware.status()
+    safety = industrial_platform.safety.evaluate(controller.thermal_status())
+    confidence = industrial_platform.operational_confidence.evaluate(
+        latest=telemetry.get("latest"),
+        previous=telemetry.get("previous"),
+        quality=quality,
+        physical_mode=not bool(hardware.get("simulation", True)),
+    )
+    availability = industrial_platform.operational_availability.evaluate(
+        confidence=confidence,
+        quality=quality,
+        safety=safety,
+        hardware=hardware,
+    )
+    return industrial_platform.operational_continuity.evaluate(
+        availability=availability,
+        confidence=confidence,
+        safety=safety,
+        hardware=hardware,
+    )
+
+
+@router.get("/industrial-platform/operational-continuity/history")
+def get_industrial_platform_operational_continuity_history(limit: int = Query(default=20, ge=1, le=100)):
+    return industrial_platform.operational_continuity.history(limit)

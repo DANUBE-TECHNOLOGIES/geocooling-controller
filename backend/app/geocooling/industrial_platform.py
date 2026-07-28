@@ -5,6 +5,7 @@ from app.geocooling.operational_advisory import GeoCoolingOperationalAdvisor, Ge
 from app.geocooling.data_quality import GeoCoolingSensorQualityManager
 from app.geocooling.operational_confidence import GeoCoolingOperationalConfidenceManager
 from app.geocooling.operational_availability import GeoCoolingOperationalAvailabilityManager
+from app.geocooling.operational_continuity import GeoCoolingOperationalContinuityManager
 
 import copy
 import json
@@ -218,6 +219,7 @@ class GeoCoolingIndustrialPlatform:
         self.operational_advisor = GeoCoolingOperationalAdvisor()
         self.operational_confidence = GeoCoolingOperationalConfidenceManager(self.events)
         self.operational_availability = GeoCoolingOperationalAvailabilityManager(self.events)
+        self.operational_continuity = GeoCoolingOperationalContinuityManager(self.events)
         self.commissioning = GeoCoolingCommissioningEngine(self)
 
     def diagnostics(self) -> dict[str, Any]:
