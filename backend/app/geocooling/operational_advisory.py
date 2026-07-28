@@ -43,11 +43,12 @@ class GeoCoolingTelemetryHub:
         "valve_open": ("valve_open", "valve", "electrovalve_open"),
     }
 
-    def __init__(self, brain_v4: Any, journal: Any, path: str | None = None) -> None:
+    def __init__(self, brain_v4: Any, journal: Any, path: str | None = None, quality_manager: Any | None = None) -> None:
         base = Path(os.getenv("GEOCOOLING_DATA_DIR", "/app/data/geocooling"))
         self.path = Path(path or os.getenv("GEOCOOLING_TELEMETRY_PATH", str(base / "telemetry-h011.json")))
         self.brain_v4 = brain_v4
         self.journal = journal
+        self.quality_manager = quality_manager
         self._lock = threading.RLock()
         self._previous: dict[str, Any] | None = None
         self._latest: dict[str, Any] | None = None
@@ -98,6 +99,8 @@ class GeoCoolingTelemetryHub:
 
     def ingest(self, payload: dict[str, Any]) -> dict[str, Any]:
         observation = self.normalize(payload)
+        if self.quality_manager is not None:
+            observation = self.quality_manager.apply_calibration(observation)
         with self._lock:
             previous = copy.deepcopy(self._latest)
             self._previous = previous
@@ -106,6 +109,7 @@ class GeoCoolingTelemetryHub:
             if previous is not None:
                 learning = self.brain_v4.observe(previous, observation)
                 self._last_learning = learning
+            quality = self.quality_manager.assess(observation, previous) if self.quality_manager is not None else None
             self._persist()
         self.journal.record("telemetry", "observation_ingested", details={
             "source": observation.get("source"),
@@ -117,6 +121,7 @@ class GeoCoolingTelemetryHub:
             "version": self.VERSION,
             "observation": copy.deepcopy(observation),
             "learning": copy.deepcopy(learning),
+            "data_quality": copy.deepcopy(quality),
             "hardware_touched": False,
         }
 
