@@ -2338,3 +2338,40 @@ def post_industrial_platform_thermal_model_learning_predict(payload: dict[str, A
 @router.post("/industrial-platform/thermal-model-learning/reset")
 def post_industrial_platform_thermal_model_learning_reset():
     return industrial_platform.thermal_model_learning.reset()
+
+# SPRINT H019 — cross-validation and controlled model promotion
+@router.get("/industrial-platform/thermal-model-validation")
+def get_industrial_platform_thermal_model_validation():
+    return industrial_platform.thermal_model_validation.status()
+
+
+@router.post("/industrial-platform/thermal-model-validation/evaluate")
+def post_industrial_platform_thermal_model_validation_evaluate(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.thermal_model_validation.evaluate(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/industrial-platform/thermal-model-validation/promote")
+def post_industrial_platform_thermal_model_validation_promote():
+    try:
+        return industrial_platform.thermal_model_validation.promote()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/industrial-platform/thermal-model-validation/rollback")
+def post_industrial_platform_thermal_model_validation_rollback():
+    try:
+        return industrial_platform.thermal_model_validation.rollback()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/industrial-platform/thermal-model-validation/predict")
+def post_industrial_platform_thermal_model_validation_predict(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.thermal_model_validation.predict(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
