@@ -2077,6 +2077,25 @@ def post_industrial_platform_brain_v4_observe(payload: dict[str, Any] = Body(...
     return industrial_platform.brain_v4.observe(previous, current)
 
 
+# SPRINT H011 — normalized telemetry and advisory hydraulic planning
+@router.post("/industrial-platform/telemetry")
+def post_industrial_platform_telemetry(payload: dict[str, Any] = Body(...)):
+    return industrial_platform.telemetry.ingest(payload)
+
+@router.get("/industrial-platform/telemetry")
+def get_industrial_platform_telemetry():
+    return industrial_platform.telemetry.status()
+
+@router.get("/industrial-platform/operational-plan")
+def get_industrial_platform_operational_plan():
+    thermal = controller.thermal_status()
+    safety = industrial_platform.safety.evaluate(thermal)
+    brain = industrial_platform.brain_v4.analyze(thermal, safety)
+    return industrial_platform.operational_advisor.build_plan(
+        brain=brain, safety=safety, hardware=industrial_platform.hardware.status()
+    )
+
+
 @router.get("/industrial-platform/commissioning")
 def get_industrial_platform_commissioning():
     return industrial_platform.commissioning.status()
