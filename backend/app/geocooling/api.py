@@ -2290,3 +2290,24 @@ def post_industrial_platform_operational_maintenance(payload: dict[str, Any] = B
         operator=str(payload.get("operator", "unknown")),
         reason=str(payload.get("reason", "maintenance operation")),
     )
+
+# SPRINT H017 — physical thermal model and condensation-safe optimization
+@router.get("/industrial-platform/physical-thermal-model")
+def get_industrial_platform_physical_thermal_model():
+    return industrial_platform.physical_thermal_model.status()
+
+
+@router.post("/industrial-platform/physical-thermal-model/predict")
+def post_industrial_platform_physical_thermal_predict(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.physical_thermal_model.predict(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/industrial-platform/physical-thermal-model/optimize")
+def post_industrial_platform_physical_thermal_optimize(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.physical_thermal_model.optimize(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
