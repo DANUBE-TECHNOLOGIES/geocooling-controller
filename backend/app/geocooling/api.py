@@ -44,7 +44,7 @@ from app.geocooling.runtime_profiler import GeoCoolingRuntimeProfiler
 from app.geocooling.alarm_engine import GeoCoolingAlarmEngine
 from app.geocooling.operations_suite import GeoCoolingOperationsSuite
 from app.geocooling.industrial_hardening import GeoCoolingIndustrialHardening, TransactionStep
-from app.geocooling.industrial_platform import GeoCoolingIndustrialPlatform
+from app.geocooling.industrial_platform import GeoCoolingIndustrialPlatform, utc_now_iso
 from app.geocooling.waveshare_modbus_driver import WaveshareModbusDriver
 
 router = APIRouter(prefix="/geocooling", tags=["GeoCooling"])
@@ -2029,3 +2029,84 @@ def get_industrial_platform_brain_v2():
 @router.get("/industrial-platform/pre-certification")
 def get_industrial_platform_pre_certification():
     return industrial_platform.certification()
+
+
+# MACRO SPRINT H007-H010 — commissioning, safety, Brain V3 and field readiness
+@router.get("/industrial-platform/safety")
+def get_industrial_platform_safety():
+    return industrial_platform.safety.evaluate(controller.thermal_status())
+
+@router.post("/industrial-platform/safety/emergency-stop")
+def post_industrial_platform_emergency_stop(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.safety.emergency_stop(
+            str(payload.get("reason", "")), str(payload.get("operator", "operator"))
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+@router.post("/industrial-platform/safety/emergency-stop/clear")
+def post_industrial_platform_emergency_stop_clear(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    return industrial_platform.safety.clear_emergency_stop(str(payload.get("operator", "operator")))
+
+@router.get("/industrial-platform/brain-v3")
+def get_industrial_platform_brain_v3():
+    thermal = controller.thermal_status()
+    safety = industrial_platform.safety.evaluate(thermal)
+    return industrial_platform.brain_v3.analyze(controller.brain_status(), thermal, safety)
+
+@router.get("/industrial-platform/commissioning")
+def get_industrial_platform_commissioning():
+    return industrial_platform.commissioning.status()
+
+@router.post("/industrial-platform/commissioning/start")
+def post_industrial_platform_commissioning_start(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    return industrial_platform.commissioning.start(str(payload.get("operator", "operator")))
+
+@router.post("/industrial-platform/commissioning/advance")
+def post_industrial_platform_commissioning_advance(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.commissioning.advance(str(payload.get("session_id", "")))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+@router.post("/industrial-platform/commissioning/cancel")
+def post_industrial_platform_commissioning_cancel(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.commissioning.cancel(
+            str(payload.get("session_id", "")), str(payload.get("reason", "operator cancellation"))
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+@router.get("/industrial-platform/field-readiness")
+def get_industrial_platform_field_readiness():
+    certification = industrial_platform.certification()
+    safety = industrial_platform.safety.evaluate(controller.thermal_status())
+    commissioning = industrial_platform.commissioning.status()
+    software_ready = (
+        certification.get("status") == "PASS"
+        and safety.get("safe") is True
+        and commissioning.get("status") == "SOFTWARE_COMPLETE_HARDWARE_PENDING"
+    )
+    return {
+        "generated_at": utc_now_iso(),
+        "version": "H010-FIELD-READINESS-1.0",
+        "software_ready": software_ready,
+        "physical_activation_allowed": False,
+        "hardware_remains_disarmed": True,
+        "blocking_items": [
+            item for item, blocked in (
+                ("pre-certification", certification.get("status") != "PASS"),
+                ("safety", safety.get("safe") is not True),
+                ("software-commissioning", commissioning.get("status") != "SOFTWARE_COMPLETE_HARDWARE_PENDING"),
+                ("physical-waveshare-test", True),
+                ("operator-field-authorization", True),
+            ) if blocked
+        ],
+        "pre_certification": certification,
+        "safety": safety,
+        "commissioning": commissioning,
+    }
