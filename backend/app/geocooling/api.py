@@ -2416,3 +2416,34 @@ def post_industrial_platform_brain_v5_decide(payload: dict[str, Any] = Body(...)
         return industrial_platform.brain_v5.decide(payload)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# SPRINT H022 — Advisory mission supervision
+@router.get("/industrial-platform/mission-supervisor")
+def get_industrial_platform_mission_supervisor():
+    return industrial_platform.mission_supervisor.status()
+
+@router.post("/industrial-platform/mission-supervisor/start")
+def post_industrial_platform_mission_start(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.mission_supervisor.start(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+@router.post("/industrial-platform/mission-supervisor/update")
+def post_industrial_platform_mission_update(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.mission_supervisor.update(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+@router.post("/industrial-platform/mission-supervisor/stop")
+def post_industrial_platform_mission_stop(payload: dict[str, Any] = Body(default={})):
+    try:
+        return industrial_platform.mission_supervisor.stop(str(payload.get("reason") or "OPERATOR_STOP"))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+@router.get("/industrial-platform/mission-supervisor/history")
+def get_industrial_platform_mission_history(limit: int = Query(default=20, ge=1, le=100)):
+    return industrial_platform.mission_supervisor.missions(limit)
