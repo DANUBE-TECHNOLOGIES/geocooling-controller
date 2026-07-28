@@ -2086,6 +2086,24 @@ def post_industrial_platform_telemetry(payload: dict[str, Any] = Body(...)):
 def get_industrial_platform_telemetry():
     return industrial_platform.telemetry.status()
 
+@router.get("/industrial-platform/data-quality")
+def get_industrial_platform_data_quality():
+    telemetry = industrial_platform.telemetry.status()
+    return industrial_platform.data_quality.assess(telemetry.get("latest"), telemetry.get("previous"))
+
+@router.post("/industrial-platform/data-quality/calibration")
+def post_industrial_platform_data_quality_calibration(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.data_quality.set_calibration(
+            str(payload.get("sensor", "")),
+            offset=payload.get("offset"),
+            operator=str(payload.get("operator", "operator")),
+            note=str(payload.get("note", "")),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/industrial-platform/operational-plan")
 def get_industrial_platform_operational_plan():
     thermal = controller.thermal_status()
