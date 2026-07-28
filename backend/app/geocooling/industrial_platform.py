@@ -14,6 +14,7 @@ from app.geocooling.energy_optimizer import GeoCoolingEnergyOptimizer
 from app.geocooling.brain_v5 import GeoCoolingBrainV5
 from app.geocooling.mission_supervisor import GeoCoolingMissionSupervisor
 from app.geocooling.hardware_readiness import GeoCoolingHardwareReadiness
+from app.geocooling.field_certification import GeoCoolingFieldCertification
 
 import copy
 import json
@@ -236,6 +237,7 @@ class GeoCoolingIndustrialPlatform:
         self.brain_v5 = GeoCoolingBrainV5(self.energy_optimizer, self.operational_confidence, self.operational_orchestrator)
         self.mission_supervisor = GeoCoolingMissionSupervisor(self.brain_v5)
         self.hardware_readiness = GeoCoolingHardwareReadiness(self.hardware, self.safety, self.events)
+        self.field_certification = GeoCoolingFieldCertification(self.hardware_readiness, self.events)
         self.commissioning = GeoCoolingCommissioningEngine(self)
 
     def diagnostics(self) -> dict[str, Any]:
