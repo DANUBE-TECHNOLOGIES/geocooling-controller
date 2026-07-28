@@ -2237,3 +2237,56 @@ def get_industrial_platform_operational_continuity():
 @router.get("/industrial-platform/operational-continuity/history")
 def get_industrial_platform_operational_continuity_history(limit: int = Query(default=20, ge=1, le=100)):
     return industrial_platform.operational_continuity.history(limit)
+
+# SPRINT H016 — global operational orchestration and maintenance mode
+
+def _industrial_operational_context():
+    telemetry = industrial_platform.telemetry.status()
+    quality = industrial_platform.data_quality.assess(telemetry.get("latest"), telemetry.get("previous"))
+    hardware = industrial_platform.hardware.status()
+    safety = industrial_platform.safety.evaluate(controller.thermal_status())
+    confidence = industrial_platform.operational_confidence.evaluate(
+        latest=telemetry.get("latest"),
+        previous=telemetry.get("previous"),
+        quality=quality,
+        physical_mode=not bool(hardware.get("simulation", True)),
+    )
+    availability = industrial_platform.operational_availability.evaluate(
+        confidence=confidence,
+        quality=quality,
+        safety=safety,
+        hardware=hardware,
+    )
+    continuity = industrial_platform.operational_continuity.evaluate(
+        availability=availability,
+        confidence=confidence,
+        safety=safety,
+        hardware=hardware,
+    )
+    return continuity, availability, confidence, safety, hardware
+
+
+@router.get("/industrial-platform/operational-orchestration")
+def get_industrial_platform_operational_orchestration():
+    continuity, availability, confidence, safety, hardware = _industrial_operational_context()
+    return industrial_platform.operational_orchestrator.evaluate(
+        continuity=continuity,
+        availability=availability,
+        confidence=confidence,
+        safety=safety,
+        hardware=hardware,
+    )
+
+
+@router.get("/industrial-platform/operational-orchestration/history")
+def get_industrial_platform_operational_orchestration_history(limit: int = Query(default=20, ge=1, le=100)):
+    return industrial_platform.operational_orchestrator.history(limit)
+
+
+@router.post("/industrial-platform/operational-orchestration/maintenance")
+def post_industrial_platform_operational_maintenance(payload: dict[str, Any] = Body(...)):
+    return industrial_platform.operational_orchestrator.set_maintenance(
+        bool(payload.get("active", True)),
+        operator=str(payload.get("operator", "unknown")),
+        reason=str(payload.get("reason", "maintenance operation")),
+    )
