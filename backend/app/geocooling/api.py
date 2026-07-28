@@ -2311,3 +2311,30 @@ def post_industrial_platform_physical_thermal_optimize(payload: dict[str, Any] =
         return industrial_platform.physical_thermal_model.optimize(payload)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# SPRINT H018 — bounded thermal model learning
+@router.get("/industrial-platform/thermal-model-learning")
+def get_industrial_platform_thermal_model_learning():
+    return industrial_platform.thermal_model_learning.status()
+
+
+@router.post("/industrial-platform/thermal-model-learning/observe")
+def post_industrial_platform_thermal_model_observe(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.thermal_model_learning.observe(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/industrial-platform/thermal-model-learning/predict")
+def post_industrial_platform_thermal_model_learning_predict(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.thermal_model_learning.predict(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/industrial-platform/thermal-model-learning/reset")
+def post_industrial_platform_thermal_model_learning_reset():
+    return industrial_platform.thermal_model_learning.reset()
