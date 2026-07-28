@@ -2056,6 +2056,27 @@ def get_industrial_platform_brain_v3():
     safety = industrial_platform.safety.evaluate(thermal)
     return industrial_platform.brain_v3.analyze(controller.brain_status(), thermal, safety)
 
+@router.get("/industrial-platform/brain-v4")
+def get_industrial_platform_brain_v4():
+    thermal = controller.thermal_status()
+    safety = industrial_platform.safety.evaluate(thermal)
+    return industrial_platform.brain_v4.analyze(thermal, safety)
+
+@router.get("/industrial-platform/brain-v4/model")
+def get_industrial_platform_brain_v4_model():
+    return industrial_platform.brain_v4.model_status()
+
+@router.post("/industrial-platform/brain-v4/weather")
+def post_industrial_platform_brain_v4_weather(payload: dict[str, Any] = Body(...)):
+    return industrial_platform.brain_v4.update_weather(payload)
+
+@router.post("/industrial-platform/brain-v4/observe")
+def post_industrial_platform_brain_v4_observe(payload: dict[str, Any] = Body(...)):
+    previous = payload.get("previous") or {}
+    current = payload.get("current") or {}
+    return industrial_platform.brain_v4.observe(previous, current)
+
+
 @router.get("/industrial-platform/commissioning")
 def get_industrial_platform_commissioning():
     return industrial_platform.commissioning.status()
