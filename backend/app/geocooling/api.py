@@ -1972,3 +1972,21 @@ def dry_run_geocooling_transaction(payload: dict[str, Any] | None = Body(default
 @router.get("/software-certification")
 def get_geocooling_software_certification(refresh: bool = True):
     return industrial_hardening.certification(refresh=refresh)
+
+# SPRINT H002 — Lifecycle, startup self-test and restart recovery
+@router.get("/hardening/lifecycle")
+def get_geocooling_hardening_lifecycle():
+    return industrial_hardening.lifecycle.snapshot()
+
+@router.get("/hardening/lifecycle/history")
+def get_geocooling_hardening_lifecycle_history(limit: int = Query(default=100, ge=1, le=1000)):
+    items = industrial_hardening.lifecycle.history(limit)
+    return {"count": len(items), "items": items}
+
+@router.get("/hardening/startup-self-test")
+def get_geocooling_startup_self_test(refresh: bool = False):
+    return industrial_hardening.run_startup_self_test() if refresh else industrial_hardening.startup_status()
+
+@router.get("/hardening/recovery")
+def get_geocooling_recovery_report():
+    return industrial_hardening.recovery_report()
