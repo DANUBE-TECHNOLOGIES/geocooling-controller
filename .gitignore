@@ -31,3 +31,5 @@ backup/
 .DS_Store
 .vscode/
 .idea/
+*.bak
+*.bak-*
