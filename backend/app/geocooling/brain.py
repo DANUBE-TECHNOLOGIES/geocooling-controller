@@ -14,6 +14,7 @@ def utc_now() -> datetime:
 
 from app.geocooling.capabilities import GeoCoolingCapabilities
 from app.geocooling.decision_context import GeoCoolingDecisionContext
+from app.geocooling.energy_model import GeoCoolingEnergyModel
 from app.geocooling.operating_mode_tracker import OperatingModeTracker
 @dataclass(frozen=True, slots=True)
 class BrainDecision:
@@ -21,13 +22,19 @@ class BrainDecision:
     confidence: int
     comfort_score: int
     cooling_score: int
+    energy_score: int
+    energy_confidence: int
+    available_cooling_power_kw: float | None
+    energy_limitation: str | None
     risk_score: int
     total_score: int
     reason: tuple[str, ...]
     data_quality: int
     operating_mode: str
     recommended_runtime_minutes: int
+    predicted_temperature_30m_c: float | None
     predicted_temperature_1h_c: float | None
+    predicted_temperature_2h_c: float | None
     predicted_temperature_3h_c: float | None
     predicted_temperature_6h_c: float | None
     generated_at: datetime
@@ -72,6 +79,10 @@ class GeoCoolingBrain:
         self.operating_mode_recovery_cycles = max(
             1,
             int(os.getenv("GEOCOOLING_MODE_RECOVERY_CYCLES", "3")),
+        )
+        self._energy_model = GeoCoolingEnergyModel(
+            minimum_useful_power_kw=self.minimum_cooling_power_kw,
+            nominal_power_kw=float(os.getenv("GEOCOOLING_NOMINAL_POWER_KW", "8.0")),
         )
         self._operating_mode_tracker = OperatingModeTracker(
             degradation_cycles=self.operating_mode_degradation_cycles,
@@ -243,12 +254,29 @@ class GeoCoolingBrain:
             device=device,
             anti_short_cycle=anti_short_cycle,
             prediction_by_horizon=prediction_by_horizon,
+            prediction_confidence=prediction.get("confidence", 0),
             number_parser=self._number,
         )
 
+        predicted_30m = context.predicted_temperature_30m_c
         predicted_1h = context.predicted_temperature_1h_c
+        predicted_2h = context.predicted_temperature_2h_c
         predicted_3h = context.predicted_temperature_3h_c
         predicted_6h = context.predicted_temperature_6h_c
+
+        predictive_start_horizon: tuple[int, float] | None = None
+        if context.prediction_confidence >= 55:
+            for horizon, temperature in (
+                (30, predicted_30m),
+                (60, predicted_1h),
+                (120, predicted_2h),
+            ):
+                if (
+                    temperature is not None
+                    and temperature >= self.start_temperature_c
+                ):
+                    predictive_start_horizon = (horizon, temperature)
+                    break
 
         capabilities = GeoCoolingCapabilities.from_latest(
             latest,
@@ -266,6 +294,23 @@ class GeoCoolingBrain:
 
         comfort_score, comfort_reasons = self._comfort_score(latest)
         cooling_score, cooling_reasons = self._cooling_score(thermal)
+        energy = self._energy_model.evaluate(
+            thermal=thermal,
+            latest=latest,
+            number_parser=self._number,
+        )
+        energy_reasons: list[str] = []
+        if energy.available_power_kw is not None:
+            energy_reasons.append(
+                f"Capacité énergétique disponible : {energy.available_power_kw:.2f} kW "
+                f"(confiance {energy.confidence} %)"
+            )
+        if energy.efficiency_percent is not None:
+            energy_reasons.append(
+                f"Efficacité hydraulique estimée à {energy.efficiency_percent} %"
+            )
+        if energy.limitation:
+            energy_reasons.append(energy.limitation)
         risk_score, risk_reasons = self._risk_score(safety, device, thermal)
 
         running = context.running
@@ -276,10 +321,19 @@ class GeoCoolingBrain:
         # En mode BUILDING_ONLY, un score hydraulique nul signifie
         # « non mesuré » et non « absence de capacité frigorifique ».
         if operating_mode == "FULL":
-            decision_score = (
-                comfort_score * 0.60
-                + cooling_score * 0.40
-            )
+            # L'énergie ne pèse dans la décision que lorsque son estimation est fiable.
+            # Une mesure absente reste neutre afin de ne pas pénaliser le mode bâtiment.
+            if energy.confidence >= 70:
+                decision_score = (
+                    comfort_score * 0.55
+                    + cooling_score * 0.25
+                    + energy.score * 0.20
+                )
+            else:
+                decision_score = (
+                    comfort_score * 0.60
+                    + cooling_score * 0.40
+                )
         elif operating_mode == "BUILDING_ONLY":
             decision_score = float(comfort_score)
         elif operating_mode == "LIMITED":
@@ -287,12 +341,19 @@ class GeoCoolingBrain:
         else:
             decision_score = 0.0
 
+        predictive_score = 0.0
+        if predictive_start_horizon is not None:
+            horizon, predicted_temperature = predictive_start_horizon
+            urgency = (120 - horizon) / 90.0
+            exceedance = max(0.0, predicted_temperature - self.start_temperature_c)
+            predictive_score = min(20.0, 8.0 + urgency * 6.0 + exceedance * 10.0)
+
         total_score = self._clamp(
-            decision_score - risk_score * 0.80,
+            decision_score + predictive_score - risk_score * 0.80,
             -100,
             100,
         )
-        reasons = comfort_reasons + cooling_reasons + risk_reasons
+        reasons = comfort_reasons + cooling_reasons + energy_reasons + risk_reasons
 
         if mode_transition.changed and mode_transition.previous_mode is not None:
             reasons.append(
@@ -346,6 +407,14 @@ class GeoCoolingBrain:
             elif indoor is not None and indoor <= self.stop_temperature_c:
                 decision = "STOP"
                 confidence = self._clamp(70 + (self.stop_temperature_c - indoor) * 15)
+            elif (
+                operating_mode == "FULL"
+                and energy.confidence >= 70
+                and energy.useful is False
+            ):
+                decision = "STOP"
+                confidence = 80
+                reasons.append("Capacité énergétique devenue insuffisante")
             elif power is not None and power < self.minimum_cooling_power_kw:
                 decision = "STOP"
                 confidence = 75
@@ -363,20 +432,28 @@ class GeoCoolingBrain:
                 )
             elif (
                 indoor is not None
+                and not (
+                    operating_mode == "FULL"
+                    and energy.confidence >= 70
+                    and energy.useful is False
+                )
                 and (
                     operating_mode == "BUILDING_ONLY"
                     or total_score >= 35
                 )
                 and (
                     indoor >= self.start_temperature_c
-                    or (predicted_3h is not None and predicted_3h >= self.start_temperature_c)
+                    or predictive_start_horizon is not None
                 )
             ):
                 decision = "START"
                 confidence = self._clamp(50 + total_score * 0.5)
-                if indoor < self.start_temperature_c and predicted_3h is not None:
+                if indoor < self.start_temperature_c and predictive_start_horizon is not None:
+                    horizon, predicted_temperature = predictive_start_horizon
                     reasons.append(
-                        f"Démarrage anticipé : {predicted_3h:.1f} °C prévus dans 3 h"
+                        "Démarrage anticipé : "
+                        f"{predicted_temperature:.1f} °C prévus dans {horizon} min "
+                        f"(confiance {context.prediction_confidence} %)"
                     )
             else:
                 decision = "WAIT"
@@ -418,13 +495,19 @@ class GeoCoolingBrain:
             confidence=self._clamp(confidence),
             comfort_score=comfort_score,
             cooling_score=cooling_score,
+            energy_score=energy.score,
+            energy_confidence=energy.confidence,
+            available_cooling_power_kw=energy.available_power_kw,
+            energy_limitation=energy.limitation,
             risk_score=risk_score,
             total_score=total_score,
             reason=unique_reasons,
             data_quality=data_quality,
             operating_mode=operating_mode,
             recommended_runtime_minutes=recommended_runtime_minutes,
+            predicted_temperature_30m_c=predicted_30m,
             predicted_temperature_1h_c=predicted_1h,
+            predicted_temperature_2h_c=predicted_2h,
             predicted_temperature_3h_c=predicted_3h,
             predicted_temperature_6h_c=predicted_6h,
             generated_at=utc_now(),

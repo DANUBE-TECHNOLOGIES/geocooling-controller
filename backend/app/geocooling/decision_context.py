@@ -21,7 +21,10 @@ class GeoCoolingDecisionContext:
     remaining_minimum_off_seconds: int
     remaining_minimum_on_seconds: int
 
+    prediction_confidence: int
+    predicted_temperature_30m_c: float | None
     predicted_temperature_1h_c: float | None
+    predicted_temperature_2h_c: float | None
     predicted_temperature_3h_c: float | None
     predicted_temperature_6h_c: float | None
 
@@ -36,6 +39,7 @@ class GeoCoolingDecisionContext:
         device: Mapping[str, Any],
         anti_short_cycle: Mapping[str, Any],
         prediction_by_horizon: Mapping[int, Any],
+        prediction_confidence: Any = 0,
         number_parser: NumberParser,
     ) -> "GeoCoolingDecisionContext":
         def number(value: Any) -> float | None:
@@ -80,8 +84,15 @@ class GeoCoolingDecisionContext:
                 )
             ),
 
+            prediction_confidence=max(0, min(100, seconds(prediction_confidence))),
+            predicted_temperature_30m_c=number(
+                prediction_by_horizon.get(30)
+            ),
             predicted_temperature_1h_c=number(
                 prediction_by_horizon.get(60)
+            ),
+            predicted_temperature_2h_c=number(
+                prediction_by_horizon.get(120)
             ),
             predicted_temperature_3h_c=number(
                 prediction_by_horizon.get(180)
@@ -125,8 +136,15 @@ class GeoCoolingDecisionContext:
             "remaining_minimum_on_seconds": (
                 self.remaining_minimum_on_seconds
             ),
+            "prediction_confidence": self.prediction_confidence,
+            "predicted_temperature_30m_c": (
+                self.predicted_temperature_30m_c
+            ),
             "predicted_temperature_1h_c": (
                 self.predicted_temperature_1h_c
+            ),
+            "predicted_temperature_2h_c": (
+                self.predicted_temperature_2h_c
             ),
             "predicted_temperature_3h_c": (
                 self.predicted_temperature_3h_c

@@ -55,3 +55,11 @@ def test_predictor_reports_unavailable_without_indoor_temperature() -> None:
     )
     assert result.available is False
     assert result.predictions == ()
+
+
+def test_predictor_default_horizons_focus_on_short_term_control() -> None:
+    predictor = GeoCoolingPredictor()
+    assert predictor.horizons_minutes == (30, 60, 120)
+
+    result = predictor.predict(state="OFF", thermal=thermal_payload())
+    assert [item.horizon_minutes for item in result.predictions] == [30, 60, 120]

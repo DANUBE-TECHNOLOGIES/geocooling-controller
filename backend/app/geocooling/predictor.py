@@ -53,7 +53,7 @@ class GeoCoolingPredictor:
 
     def __init__(self) -> None:
         self.horizons_minutes = self._parse_horizons(
-            os.getenv("GEOCOOLING_PREDICTION_HORIZONS_MIN", "60,180,360")
+            os.getenv("GEOCOOLING_PREDICTION_HORIZONS_MIN", "30,60,120")
         )
         self.house_thermal_capacity_kwh_per_c = max(
             0.5,
@@ -81,7 +81,7 @@ class GeoCoolingPredictor:
                 continue
             if 1 <= value <= 1440:
                 values.append(value)
-        return tuple(sorted(set(values))) or (60, 180, 360)
+        return tuple(sorted(set(values))) or (30, 60, 120)
 
     @staticmethod
     def _number(value: Any) -> float | None:
