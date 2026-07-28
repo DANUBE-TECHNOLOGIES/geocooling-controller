@@ -180,6 +180,43 @@ class GeoCoolingController:
             float(os.getenv("GEOCOOLING_VALVE_CLOSE_DELAY", "2")),
         )
 
+        # PATCH C019 — autorisation explicite du séquencement hydraulique réel.
+        # L'armement autorise les commandes matérielles unitaires ; cette
+        # seconde barrière autorise le contrôleur à enchaîner automatiquement
+        # vanne puis circulateur. Elle reste désactivée par défaut.
+        self.hardware_sequence_enabled = (
+            os.getenv(
+                "GEOCOOLING_HARDWARE_SEQUENCE_ENABLED",
+                "false",
+            ).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.sequence_verify_feedback = (
+            os.getenv(
+                "GEOCOOLING_SEQUENCE_VERIFY_FEEDBACK",
+                "true",
+            ).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.sequence_feedback_timeout_seconds = max(
+            0.2,
+            float(
+                os.getenv(
+                    "GEOCOOLING_SEQUENCE_FEEDBACK_TIMEOUT_SECONDS",
+                    "3",
+                )
+            ),
+        )
+        self.sequence_feedback_poll_seconds = max(
+            0.05,
+            float(
+                os.getenv(
+                    "GEOCOOLING_SEQUENCE_FEEDBACK_POLL_SECONDS",
+                    "0.2",
+                )
+            ),
+        )
+
         self.max_runtime_seconds = max(
             60,
             int(os.getenv("GEOCOOLING_MAX_RUNTIME_SECONDS", "7200")),
@@ -1958,8 +1995,65 @@ class GeoCoolingController:
                     )
                     return
 
+    def _hardware_sequence_allowed(self) -> tuple[bool, str]:
+        if self.driver_name == "simulation":
+            return True, "Séquence autorisée en simulation"
+        if not self.hardware_sequence_enabled:
+            return (
+                False,
+                "Séquence hydraulique réelle désactivée : "
+                "configurer GEOCOOLING_HARDWARE_SEQUENCE_ENABLED=true "
+                "après validation séparée de la vanne et du circulateur.",
+            )
+        return True, "Séquence hydraulique réelle autorisée"
+
+    def _wait_for_actuator_state(
+        self,
+        *,
+        valve_open: bool | None = None,
+        pump_running: bool | None = None,
+        action: str,
+    ) -> dict[str, Any]:
+        """Attend la confirmation Modbus d'un état d'actionneur.
+
+        Le retour est vérifié par lecture réelle du pilote. Une incohérence
+        déclenche une exception et donc l'état sûr pompe OFF puis vanne OFF.
+        """
+        if not self.sequence_verify_feedback:
+            return self.driver.status()
+
+        deadline = time.monotonic() + self.sequence_feedback_timeout_seconds
+        last_status: dict[str, Any] = {}
+        while True:
+            last_status = self.driver.status()
+            valve_ok = (
+                valve_open is None
+                or bool(last_status.get("valve_open")) is valve_open
+            )
+            pump_ok = (
+                pump_running is None
+                or bool(last_status.get("pump_running")) is pump_running
+            )
+            if valve_ok and pump_ok:
+                return last_status
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Confirmation matérielle absente après {action} : "
+                    f"vanne={last_status.get('valve_open')}, "
+                    f"pompe={last_status.get('pump_running')}."
+                )
+            time.sleep(self.sequence_feedback_poll_seconds)
+
     def request_start(self) -> dict[str, Any]:
         with self._lock:
+            sequence_allowed, sequence_reason = self._hardware_sequence_allowed()
+            if not sequence_allowed:
+                return {
+                    "accepted": False,
+                    "message": sequence_reason,
+                    "status": self.status(),
+                }
+
             device_status = self.device_manager.status()
             thermal_safety = self._thermal_safety()
             remaining_off = self._remaining_minimum_off_seconds()
@@ -2045,6 +2139,11 @@ class GeoCoolingController:
             )
 
             self.driver.open_valve()
+            self._wait_for_actuator_state(
+                valve_open=True,
+                pump_running=False,
+                action="ouverture de la vanne",
+            )
 
             self._transition(
                 GeoCoolingState.WAITING_FLOW,
@@ -2068,6 +2167,11 @@ class GeoCoolingController:
             )
 
             self.driver.start_pump()
+            self._wait_for_actuator_state(
+                valve_open=True,
+                pump_running=True,
+                action="démarrage du circulateur",
+            )
 
             with self._lock:
                 self.started_at = utc_now()
@@ -2188,6 +2292,10 @@ class GeoCoolingController:
             )
 
             self.driver.stop_pump()
+            self._wait_for_actuator_state(
+                pump_running=False,
+                action="arrêt du circulateur",
+            )
 
             self._transition(
                 GeoCoolingState.WAITING_DRAIN,
@@ -2207,6 +2315,11 @@ class GeoCoolingController:
             )
 
             self.driver.close_valve()
+            self._wait_for_actuator_state(
+                valve_open=False,
+                pump_running=False,
+                action="fermeture de la vanne",
+            )
 
             with self._lock:
                 self.stopped_at = utc_now()
@@ -2348,6 +2461,20 @@ class GeoCoolingController:
                     ],
                 },
                 "driver": driver_status,
+                "hardware_sequence": {
+                    "enabled": self.hardware_sequence_enabled,
+                    "allowed": self._hardware_sequence_allowed()[0],
+                    "reason": self._hardware_sequence_allowed()[1],
+                    "verify_feedback": self.sequence_verify_feedback,
+                    "feedback_timeout_seconds": (
+                        self.sequence_feedback_timeout_seconds
+                    ),
+                    "feedback_poll_seconds": (
+                        self.sequence_feedback_poll_seconds
+                    ),
+                    "valve_open_delay_seconds": self.valve_open_delay,
+                    "valve_close_delay_seconds": self.valve_close_delay,
+                },
             }
 
     def status(self) -> dict[str, Any]:
