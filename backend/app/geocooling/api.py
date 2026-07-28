@@ -44,6 +44,8 @@ from app.geocooling.runtime_profiler import GeoCoolingRuntimeProfiler
 from app.geocooling.alarm_engine import GeoCoolingAlarmEngine
 from app.geocooling.operations_suite import GeoCoolingOperationsSuite
 from app.geocooling.industrial_hardening import GeoCoolingIndustrialHardening, TransactionStep
+from app.geocooling.industrial_platform import GeoCoolingIndustrialPlatform
+from app.geocooling.waveshare_modbus_driver import WaveshareModbusDriver
 
 router = APIRouter(prefix="/geocooling", tags=["GeoCooling"])
 controller = GeoCoolingController()
@@ -1755,6 +1757,12 @@ industrial_hardening = GeoCoolingIndustrialHardening(
     hardware_manual_control=hardware_manual_control,
 )
 setattr(controller, "industrial_hardening", industrial_hardening)
+industrial_platform = GeoCoolingIndustrialPlatform(
+    controller=controller,
+    hardening=industrial_hardening,
+    physical_factory=WaveshareModbusDriver,
+)
+setattr(controller, "industrial_platform", industrial_platform)
 for _target, _method, _component in (
     (controller.brain, "evaluate", "brain"),
     (forecast_engine, "forecast", "forecast"),
@@ -1990,3 +1998,34 @@ def get_geocooling_startup_self_test(refresh: bool = False):
 @router.get("/hardening/recovery")
 def get_geocooling_recovery_report():
     return industrial_hardening.recovery_report()
+
+
+# MACRO SPRINT H003-H006 — Observability, hardware gateway, Brain V2, pre-certification
+@router.get("/industrial-platform/diagnostics")
+def get_industrial_platform_diagnostics():
+    return industrial_platform.diagnostics()
+
+@router.get("/industrial-platform/events")
+def get_industrial_platform_events(limit: int = Query(default=200, ge=1, le=2000), minimum_level: str | None = None):
+    items = industrial_platform.events.history(limit, minimum_level=minimum_level)
+    return {"count": len(items), "items": items}
+
+@router.get("/industrial-platform/metrics")
+def get_industrial_platform_metrics():
+    return industrial_platform.events.metrics()
+
+@router.get("/industrial-platform/hardware")
+def get_industrial_platform_hardware():
+    return industrial_platform.hardware.status()
+
+@router.post("/industrial-platform/hardware/dry-run")
+def post_industrial_platform_hardware_dry_run(payload: dict[str, Any] = Body(...)):
+    return industrial_platform.hardware.dry_run(str(payload.get("command", "")))
+
+@router.get("/industrial-platform/brain-v2")
+def get_industrial_platform_brain_v2():
+    return industrial_platform.brain_v2.analyze(controller.brain_status(), controller.thermal_status())
+
+@router.get("/industrial-platform/pre-certification")
+def get_industrial_platform_pre_certification():
+    return industrial_platform.certification()
