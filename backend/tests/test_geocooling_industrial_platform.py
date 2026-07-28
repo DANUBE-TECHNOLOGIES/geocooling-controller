@@ -3,6 +3,7 @@ from app.geocooling.industrial_platform import (
     GeoCoolingEventJournal,
     GeoCoolingHardwareGateway,
     GeoCoolingIndustrialPlatform,
+    GeoCoolingBrainAdvisorV3,
 )
 
 
@@ -53,3 +54,41 @@ def test_platform_pre_certification_blocks_field_activation(tmp_path, monkeypatc
     assert report["field_activation_allowed"] is False
     assert report["requires_physical_waveshare_test"] is True
     assert platform.diagnostics()["healthy"] is True
+
+
+def test_safety_manager_forces_safe_state_on_emergency(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEOCOOLING_EVENT_JOURNAL_PATH", str(tmp_path / "events.jsonl"))
+    platform = GeoCoolingIndustrialPlatform(controller=FakeController(), hardening=FakeHardening())
+    result = platform.safety.emergency_stop("operator test", "tester")
+    assert result["active"] is True
+    assert platform.hardware.status()["armed"] is False
+    assert platform.hardware.status()["pump_running"] is False
+    assert platform.safety.evaluate({})["safe"] is False
+    cleared = platform.safety.clear_emergency_stop("tester")
+    assert cleared["hardware_remains_disarmed"] is True
+
+
+def test_commissioning_is_persistent_dry_run_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEOCOOLING_EVENT_JOURNAL_PATH", str(tmp_path / "events.jsonl"))
+    monkeypatch.setenv("GEOCOOLING_COMMISSIONING_PATH", str(tmp_path / "commissioning.json"))
+    controller = FakeController()
+    controller.thermal_status = lambda: {}
+    platform = GeoCoolingIndustrialPlatform(controller=controller, hardening=FakeHardening())
+    session = platform.commissioning.start("tester")
+    for _ in platform.commissioning.STEPS:
+        session = platform.commissioning.advance(session["session_id"])
+    assert session["status"] == "SOFTWARE_COMPLETE_HARDWARE_PENDING"
+    assert session["hardware_remains_disarmed"] is True
+    assert platform.hardware.status()["armed"] is False
+    assert all(not item["result"].get("hardware_touched", False) for item in session["results"])
+
+
+def test_brain_v3_never_authorizes_physical_command():
+    result = GeoCoolingBrainAdvisorV3().analyze(
+        {"decision": "START", "confidence": 90, "recommended_runtime_minutes": 15},
+        {"latest": {"indoor_temperature_c": 26.0, "supply_temperature_c": 18.0, "return_temperature_c": 20.0}},
+        {"safe": True},
+    )
+    assert result["recommended_action"] == "START"
+    assert result["physical_command_authorized"] is False
+    assert result["learning_mode"] == "OBSERVE_ONLY"

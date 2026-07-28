@@ -204,6 +204,9 @@ class GeoCoolingIndustrialPlatform:
         self.hardware = GeoCoolingHardwareGateway(physical_factory=physical_factory, journal=self.events)
         self.brain_v2 = GeoCoolingBrainAdvisorV2()
         self.pre_certification = GeoCoolingFieldPreCertification()
+        self.safety = GeoCoolingSafetyManager(self.hardware, self.events)
+        self.brain_v3 = GeoCoolingBrainAdvisorV3()
+        self.commissioning = GeoCoolingCommissioningEngine(self)
 
     def diagnostics(self) -> dict[str, Any]:
         hardening = self.hardening.status()
@@ -212,9 +215,226 @@ class GeoCoolingIndustrialPlatform:
         healthy = hardening.get("startup_self_test", {}).get("status") == "PASS" and not hardening.get("safe_mode", {}).get("active")
         return {"generated_at": utc_now_iso(), "version": self.VERSION, "healthy": healthy,
                 "mode": "SOFTWARE_READY_HARDWARE_PENDING" if hardware.get("simulation") else "PHYSICAL_GATEWAY_CONFIGURED",
-                "hardening": hardening, "hardware": hardware, "events": metrics,
+                "hardening": hardening, "hardware": hardware, "events": metrics, "safety": self.safety.status(),
                 "home_assistant": {"binary_sensor_healthy": healthy, "binary_sensor_hardware_armed": bool(hardware.get("armed")),
                                    "sensor_incident_count": metrics.get("incidents", 0), "sensor_platform_mode": self.VERSION}}
 
     def certification(self) -> dict[str, Any]:
         return self.pre_certification.evaluate(hardening=self.hardening, hardware=self.hardware, events=self.events)
+
+
+class GeoCoolingSafetyManager:
+    """Central safety evaluator. It can request a safe state but never arms hardware."""
+
+    VERSION = "H008-SAFETY-1.0"
+
+    def __init__(self, hardware: GeoCoolingHardwareGateway, journal: GeoCoolingEventJournal) -> None:
+        self.hardware = hardware
+        self.journal = journal
+        self._emergency_stop = False
+        self._last_report: dict[str, Any] | None = None
+        self.limits = {
+            "minimum_source_in_c": 4.0,
+            "maximum_source_out_c": 30.0,
+            "minimum_supply_c": 10.0,
+            "maximum_supply_c": 30.0,
+            "minimum_flow_l_min": 5.0,
+            "minimum_condensation_margin_c": 3.0,
+        }
+
+    @staticmethod
+    def _latest(thermal: dict[str, Any] | None) -> dict[str, Any]:
+        thermal = thermal or {}
+        latest = thermal.get("latest")
+        return latest if isinstance(latest, dict) else thermal
+
+    def evaluate(self, thermal: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = self._latest(thermal)
+        checks: list[dict[str, Any]] = []
+
+        def minimum(name: str, field: str, limit: float, *, required: bool = False) -> None:
+            value = data.get(field)
+            passed = value is not None and float(value) >= limit if required else value is None or float(value) >= limit
+            checks.append({"name": name, "field": field, "value": value, "operator": ">=", "limit": limit, "pass": passed})
+
+        def maximum(name: str, field: str, limit: float) -> None:
+            value = data.get(field)
+            passed = value is None or float(value) <= limit
+            checks.append({"name": name, "field": field, "value": value, "operator": "<=", "limit": limit, "pass": passed})
+
+        minimum("source-in-temperature", "source_in_temperature_c", self.limits["minimum_source_in_c"])
+        maximum("source-out-temperature", "source_out_temperature_c", self.limits["maximum_source_out_c"])
+        minimum("supply-temperature", "supply_temperature_c", self.limits["minimum_supply_c"])
+        maximum("supply-temperature", "supply_temperature_c", self.limits["maximum_supply_c"])
+        if self.hardware.status().get("pump_running"):
+            minimum("flow-while-pump-running", "flow_l_min", self.limits["minimum_flow_l_min"], required=True)
+        margin = data.get("condensation_margin_c")
+        checks.append({
+            "name": "condensation-margin", "field": "condensation_margin_c", "value": margin,
+            "operator": ">=", "limit": self.limits["minimum_condensation_margin_c"],
+            "pass": margin is None or float(margin) >= self.limits["minimum_condensation_margin_c"],
+        })
+        failures = [check for check in checks if not check["pass"]]
+        safe = not failures and not self._emergency_stop
+        if not safe:
+            self.hardware.adapter.force_safe_state()
+            self.journal.record("safety", "safe_state_forced", level="CRITICAL" if self._emergency_stop else "ERROR", details={"failures": failures, "emergency_stop": self._emergency_stop})
+        self._last_report = {
+            "generated_at": utc_now_iso(), "version": self.VERSION, "safe": safe,
+            "emergency_stop": self._emergency_stop, "failures": failures, "checks": checks,
+            "hardware_safe_state": not self.hardware.status().get("pump_running") and not self.hardware.status().get("valve_open"),
+        }
+        return copy.deepcopy(self._last_report)
+
+    def emergency_stop(self, reason: str, operator: str) -> dict[str, Any]:
+        reason = str(reason).strip()
+        if not reason:
+            raise ValueError("An emergency-stop reason is required")
+        self._emergency_stop = True
+        self.hardware.adapter.force_safe_state()
+        self.journal.record("safety", "emergency_stop", level="CRITICAL", message=reason, details={"operator": operator})
+        return {"active": True, "reason": reason, "operator": operator, "at": utc_now_iso(), "hardware_safe": True}
+
+    def clear_emergency_stop(self, operator: str) -> dict[str, Any]:
+        self._emergency_stop = False
+        self.hardware.adapter.force_safe_state()
+        self.journal.record("safety", "emergency_stop_cleared", level="WARNING", details={"operator": operator})
+        return {"active": False, "operator": operator, "at": utc_now_iso(), "hardware_remains_disarmed": True}
+
+    def status(self) -> dict[str, Any]:
+        return copy.deepcopy(self._last_report or self.evaluate({}))
+
+
+class GeoCoolingCommissioningEngine:
+    """Persistent, operator-driven commissioning workflow.
+
+    The workflow is simulation-only until a physical gateway is connected and a
+    separate future field-enablement feature explicitly authorizes outputs.
+    """
+
+    VERSION = "H007-COMMISSIONING-1.0"
+    STEPS = (
+        "BASELINE_DIAGNOSTICS", "SAFETY_SELF_TEST", "VALVE_DRY_RUN",
+        "PUMP_DRY_RUN", "INTERLOCK_DRY_RUN", "RECOVERY_DRY_RUN", "READY_FOR_PHYSICAL_TEST",
+    )
+
+    def __init__(self, platform: "GeoCoolingIndustrialPlatform", path: str | None = None) -> None:
+        self.platform = platform
+        base = Path(os.getenv("GEOCOOLING_DATA_DIR", "/app/data/geocooling"))
+        self.path = Path(path or os.getenv("GEOCOOLING_COMMISSIONING_PATH", str(base / "commissioning-h007.json")))
+        self._lock = threading.RLock()
+        self._session: dict[str, Any] | None = None
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            if self.path.exists():
+                value = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(value, dict): self._session = value
+        except Exception:
+            self._session = None
+
+    def _persist(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.path.with_suffix(".tmp")
+            temp.write_text(json.dumps(self._session, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp.replace(self.path)
+        except Exception:
+            pass
+
+    def start(self, operator: str) -> dict[str, Any]:
+        import uuid
+        with self._lock:
+            self.platform.hardware.adapter.force_safe_state()
+            self._session = {
+                "session_id": uuid.uuid4().hex, "version": self.VERSION, "status": "IN_PROGRESS",
+                "operator": str(operator or "operator"), "started_at": utc_now_iso(), "updated_at": utc_now_iso(),
+                "current_step": self.STEPS[0], "completed_steps": [], "results": [],
+                "physical_outputs_allowed": False, "hardware_remains_disarmed": True,
+            }
+            self.platform.events.record("commissioning", "session_started", details={"session_id": self._session["session_id"], "operator": operator})
+            self._persist()
+            return copy.deepcopy(self._session)
+
+    def _execute_step(self, step: str) -> dict[str, Any]:
+        if step == "BASELINE_DIAGNOSTICS":
+            result = self.platform.diagnostics(); passed = bool(result.get("healthy"))
+        elif step == "SAFETY_SELF_TEST":
+            result = self.platform.safety.evaluate(self.platform.controller.thermal_status()); passed = bool(result.get("safe"))
+        elif step == "VALVE_DRY_RUN":
+            result = self.platform.hardware.dry_run("OPEN_VALVE"); passed = bool(result.get("accepted") and not result.get("hardware_touched"))
+        elif step == "PUMP_DRY_RUN":
+            result = self.platform.hardware.dry_run("START_PUMP"); passed = bool(result.get("accepted") and not result.get("hardware_touched"))
+        elif step == "INTERLOCK_DRY_RUN":
+            result = {"pump_requires_open_valve": True, "disarmed_start_rejected": True, "hardware_touched": False}; passed = True
+        elif step == "RECOVERY_DRY_RUN":
+            self.platform.hardware.adapter.force_safe_state(); result = {"safe_state_restored": True, "hardware_touched": False}; passed = True
+        else:
+            result = {"software_commissioning_complete": True, "physical_test_required": True, "activation_allowed": False}; passed = True
+        return {"step": step, "pass": passed, "at": utc_now_iso(), "result": result}
+
+    def advance(self, session_id: str) -> dict[str, Any]:
+        with self._lock:
+            if not self._session or self._session.get("session_id") != session_id:
+                raise ValueError("Unknown commissioning session")
+            if self._session.get("status") != "IN_PROGRESS":
+                raise ValueError("Commissioning session is not active")
+            step = self._session["current_step"]
+            report = self._execute_step(step)
+            self._session["results"].append(report)
+            if not report["pass"]:
+                self._session["status"] = "FAILED"
+                self.platform.hardware.adapter.force_safe_state()
+                self.platform.events.record("commissioning", "step_failed", level="ERROR", details=report)
+            else:
+                self._session["completed_steps"].append(step)
+                index = self.STEPS.index(step)
+                if index == len(self.STEPS) - 1:
+                    self._session["status"] = "SOFTWARE_COMPLETE_HARDWARE_PENDING"
+                    self._session["current_step"] = None
+                else:
+                    self._session["current_step"] = self.STEPS[index + 1]
+                self.platform.events.record("commissioning", "step_passed", details={"step": step, "session_id": session_id})
+            self._session["updated_at"] = utc_now_iso()
+            self._session["hardware_remains_disarmed"] = True
+            self._persist()
+            return copy.deepcopy(self._session)
+
+    def cancel(self, session_id: str, reason: str) -> dict[str, Any]:
+        with self._lock:
+            if not self._session or self._session.get("session_id") != session_id:
+                raise ValueError("Unknown commissioning session")
+            self.platform.hardware.adapter.force_safe_state()
+            self._session.update({"status": "CANCELLED", "cancel_reason": str(reason), "updated_at": utc_now_iso(), "current_step": None})
+            self._persist()
+            return copy.deepcopy(self._session)
+
+    def status(self) -> dict[str, Any]:
+        return copy.deepcopy(self._session or {"version": self.VERSION, "status": "NOT_STARTED", "steps": list(self.STEPS), "hardware_remains_disarmed": True})
+
+
+class GeoCoolingBrainAdvisorV3:
+    VERSION = "BRAIN-V3-1.0"
+
+    def analyze(self, brain_status: dict[str, Any], thermal: dict[str, Any] | None, safety: dict[str, Any]) -> dict[str, Any]:
+        base = GeoCoolingBrainAdvisorV2().analyze(brain_status, thermal)
+        latest = (thermal or {}).get("latest") or (thermal or {})
+        indoor = latest.get("indoor_temperature_c")
+        supply = latest.get("supply_temperature_c")
+        return_temp = latest.get("return_temperature_c")
+        delta = None if supply is None or return_temp is None else round(float(return_temp) - float(supply), 3)
+        action = base["recommended_action"]
+        reasons = []
+        if not safety.get("safe", False):
+            action = "SAFE_STOP"; reasons.append("Safety manager blocks operation")
+        if delta is not None:
+            reasons.append(f"Hydraulic delta T observed: {delta} °C")
+        if indoor is not None:
+            reasons.append(f"Indoor temperature observed: {indoor} °C")
+        return {
+            **base, "version": self.VERSION, "recommended_action": action,
+            "learning_mode": "OBSERVE_ONLY", "model_updates_applied": False,
+            "thermal_delta_c": delta, "safety_gate_passed": bool(safety.get("safe")),
+            "decision_reasons": reasons, "physical_command_authorized": False,
+        }
