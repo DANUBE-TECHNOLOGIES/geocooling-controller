@@ -2402,3 +2402,17 @@ def post_industrial_platform_energy_assess(payload: dict[str, Any] = Body(...)):
 @router.get("/industrial-platform/energy-optimizer/assessments")
 def get_industrial_platform_energy_assessments(limit: int = Query(default=20, ge=1, le=100)):
     return industrial_platform.energy_optimizer.assessments(limit)
+
+
+# SPRINT H021 — Explainable Brain V5
+@router.get("/industrial-platform/brain-v5")
+def get_industrial_platform_brain_v5():
+    return industrial_platform.brain_v5.status()
+
+
+@router.post("/industrial-platform/brain-v5/decide")
+def post_industrial_platform_brain_v5_decide(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.brain_v5.decide(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
