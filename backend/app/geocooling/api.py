@@ -26,15 +26,40 @@ from app.geocooling.operational_certification import OperationalCertificationEng
 from app.geocooling.sensor_mqtt_discovery import SensorMQTTDiscovery
 from app.geocooling.sensor_validation import SensorValidationEngine
 from app.geocooling.mqtt_preflight import MQTTPreflightCertification
+from app.geocooling.hardware_manual_control import (
+    ARM_CONFIRMATION,
+    HardwareManualControl,
+)
 from app.geocooling.hardware_certification import HardwareCertificationEngine
 from app.geocooling.digital_twin import GeoCoolingDigitalTwin
 from app.geocooling.water_test_framework import GeoCoolingWaterTestFramework, WaterTestError
+from app.geocooling.operations_dashboard import GeoCoolingOperationsDashboard
+from app.geocooling.thermal_forecast import GeoCoolingForecastEngine
+from app.geocooling.digital_twin_calibration import DigitalTwinCalibration
+from app.geocooling.efficiency_index import GeoCoolingEfficiencyIndex
+from app.geocooling.drift_detector import GeoCoolingDriftDetector
+from app.geocooling.assisted_calibration import AssistedCalibrationEngine
+from app.geocooling.integration_audit import GeoCoolingIntegrationAudit
+from app.geocooling.runtime_profiler import GeoCoolingRuntimeProfiler
+from app.geocooling.alarm_engine import GeoCoolingAlarmEngine
+from app.geocooling.operations_suite import GeoCoolingOperationsSuite
 
 router = APIRouter(prefix="/geocooling", tags=["GeoCooling"])
 controller = GeoCoolingController()
 health_manager = GeoCoolingHealthManager(controller)
 commissioning_manager = GeoCoolingCommissioningManager(controller, health_manager)
 commissioning_test_manager = GeoCoolingCommissioningTestManager(controller)
+hardware_manual_control = HardwareManualControl(controller)
+operations_dashboard = GeoCoolingOperationsDashboard(controller, hardware_manual_control)
+
+def _c0241_route_provider() -> list[str]:
+    return [route.path for route in router.routes]
+
+integration_audit = GeoCoolingIntegrationAudit(
+    controller, hardware_manual_control, operations_dashboard,
+    route_provider=_c0241_route_provider,
+)
+forecast_engine = GeoCoolingForecastEngine(controller)
 state_cache = GeoCoolingStateCache(controller)
 controller.attach_state_cache(state_cache)
 flight_recorder = GeoCoolingFlightRecorder(controller, state_cache)
@@ -376,6 +401,34 @@ digital_twin = GeoCoolingDigitalTwin(
 )
 setattr(controller, "digital_twin", digital_twin)
 
+digital_twin_calibration = DigitalTwinCalibration(
+    controller=controller,
+    digital_twin=digital_twin,
+    forecast_engine=forecast_engine,
+)
+setattr(controller, "digital_twin_calibration", digital_twin_calibration)
+
+efficiency_index = GeoCoolingEfficiencyIndex(
+    controller=controller,
+    digital_twin=digital_twin,
+    calibration=digital_twin_calibration,
+)
+setattr(controller, "efficiency_index", efficiency_index)
+
+drift_detector = GeoCoolingDriftDetector(
+    efficiency_index=efficiency_index,
+    calibration=digital_twin_calibration,
+    digital_twin=digital_twin,
+)
+setattr(controller, "drift_detector", drift_detector)
+
+assisted_calibration = AssistedCalibrationEngine(
+    calibration=digital_twin_calibration,
+    drift_detector=drift_detector,
+    controller=controller,
+)
+setattr(controller, "assisted_calibration", assisted_calibration)
+
 water_test_framework = GeoCoolingWaterTestFramework(
     controller=controller,
     digital_twin=digital_twin,
@@ -459,6 +512,42 @@ def get_brain() -> dict:
     return controller.brain_status()
 
 
+@router.get("/brain/history")
+def get_brain_history(limit: int = Query(default=200, ge=1, le=200)) -> dict:
+    items = controller.brain.decision_history(limit)
+    return {"count": len(items), "limit": limit, "items": items}
+
+
+@router.get("/brain/metrics")
+def get_brain_metrics() -> dict:
+    return controller.brain.decision_metrics()
+
+
+@router.get("/brain/journal")
+def get_brain_journal(limit: int = Query(default=500, ge=1, le=5000)) -> list[dict]:
+    return controller.brain.decision_journal(limit)
+
+
+@router.get("/brain/journal/status")
+def get_brain_journal_status() -> dict:
+    return controller.brain.decision_journal_status()
+
+
+@router.get("/brain/forecast")
+def get_brain_forecast() -> dict:
+    return forecast_engine.forecast()
+
+
+@router.get("/brain/scenarios")
+def get_brain_scenarios() -> dict:
+    return forecast_engine.scenarios()
+
+
+@router.get("/dashboard")
+def get_operations_dashboard() -> dict:
+    return operations_dashboard.snapshot()
+
+
 @router.get("/prediction")
 def get_prediction() -> dict:
     return controller.prediction_status()
@@ -468,6 +557,77 @@ def get_prediction() -> dict:
 def get_home_assistant_status() -> dict:
     return controller.home_assistant_status()
 
+
+
+def _hardware_requested_by(payload: dict | None) -> str:
+    if payload is None:
+        return "api"
+    value = payload.get("requested_by", "api")
+    return str(value).strip() or "api"
+
+
+def _hardware_call(action, *, payload: dict | None = None) -> dict:
+    try:
+        return action(requested_by=_hardware_requested_by(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/manual/hardware/status")
+def manual_hardware_status() -> dict:
+    try:
+        return hardware_manual_control.status()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/manual/arm")
+def manual_hardware_arm(payload: dict = Body(default={})) -> dict:
+    try:
+        return hardware_manual_control.arm(
+            confirmation=str(payload.get("confirmation", "")),
+            requested_by=_hardware_requested_by(payload),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/manual/disarm")
+def manual_hardware_disarm(payload: dict = Body(default={})) -> dict:
+    return _hardware_call(hardware_manual_control.disarm, payload=payload)
+
+
+@router.post("/manual/valve/open")
+def manual_hardware_valve_open(payload: dict = Body(default={})) -> dict:
+    return _hardware_call(hardware_manual_control.valve_open, payload=payload)
+
+
+@router.post("/manual/valve/close")
+def manual_hardware_valve_close(payload: dict = Body(default={})) -> dict:
+    return _hardware_call(hardware_manual_control.valve_close, payload=payload)
+
+
+@router.post("/manual/pump/start")
+def manual_hardware_pump_start(payload: dict = Body(default={})) -> dict:
+    return _hardware_call(hardware_manual_control.pump_start, payload=payload)
+
+
+@router.post("/manual/pump/stop")
+def manual_hardware_pump_stop(payload: dict = Body(default={})) -> dict:
+    return _hardware_call(hardware_manual_control.pump_stop, payload=payload)
+
+
+@router.post("/manual/hardware/stop")
+def manual_hardware_safe_stop(payload: dict = Body(default={})) -> dict:
+    return _hardware_call(hardware_manual_control.safe_stop, payload=payload)
 
 # PATCH-001E-MANUAL-COMMAND-API
 def _manual_payload_value(
@@ -1468,6 +1628,135 @@ def refresh_digital_twin():
     return digital_twin.refresh(trigger="http:post")
 
 
+# PATCH C023.2 — Digital Twin calibration and prediction validation
+@router.get("/digital-twin/model")
+def get_digital_twin_model():
+    return digital_twin_calibration.model()
+
+
+@router.get("/digital-twin/calibration/status")
+def get_digital_twin_calibration_status(evaluate_due: bool = True):
+    return digital_twin_calibration.status(evaluate_due=evaluate_due)
+
+
+@router.get("/digital-twin/calibration/history")
+def get_digital_twin_calibration_history(limit: int = 100):
+    return digital_twin_calibration.history(limit=limit)
+
+
+@router.post("/digital-twin/calibration/capture")
+def capture_digital_twin_prediction():
+    return digital_twin_calibration.capture()
+
+
+@router.post("/digital-twin/calibration/observe")
+def observe_digital_twin_prediction(payload: dict = Body(...)):
+    try:
+        return digital_twin_calibration.observe(
+            predicted_temperature_c=payload.get("predicted_temperature_c"),
+            observed_temperature_c=payload.get("observed_temperature_c"),
+            horizon_minutes=payload.get("horizon_minutes", 60),
+            strategy=payload.get("strategy"),
+            capture_id=payload.get("capture_id"),
+            source=payload.get("source", "http"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# PATCH C023.3 — GeoCooling Efficiency Index
+@router.get("/performance/gei")
+def get_geocooling_efficiency_index(persist: bool = True):
+    return efficiency_index.calculate(persist=persist)
+
+
+@router.get("/performance/gei/history")
+def get_geocooling_efficiency_history(limit: int = Query(default=100, ge=1, le=500)):
+    return efficiency_index.history(limit=limit)
+
+
+@router.get("/performance/gei/status")
+def get_geocooling_efficiency_status():
+    return efficiency_index.status()
+
+
+# PATCH C023.4 — Détection des dérives
+@router.get("/performance/drift")
+def get_geocooling_drift_analysis(persist: bool = True):
+    return drift_detector.analyze(persist=persist)
+
+
+@router.get("/performance/drift/history")
+def get_geocooling_drift_history(limit: int = Query(default=100, ge=1, le=500)):
+    return drift_detector.history(limit=limit)
+
+
+@router.get("/performance/drift/status")
+def get_geocooling_drift_status():
+    return drift_detector.status()
+
+
+# PATCH C023.5 — Auto-calibration assistée (aucune application automatique)
+@router.get("/performance/calibration/recommendations")
+def get_assisted_calibration_recommendations(persist: bool = False):
+    return assisted_calibration.recommendations(persist=persist)
+
+
+@router.get("/performance/calibration/history")
+def get_assisted_calibration_history(limit: int = Query(default=100, ge=1, le=500)):
+    return assisted_calibration.history(limit=limit)
+
+
+@router.get("/performance/calibration/status")
+def get_assisted_calibration_status():
+    return assisted_calibration.status()
+
+
+@router.post("/performance/calibration/decision")
+def post_assisted_calibration_decision(payload: dict):
+    return assisted_calibration.decide(
+        proposal=payload.get("proposal"),
+        decision=payload.get("decision", ""),
+        note=payload.get("note"),
+        decided_by=payload.get("decided_by", "operator"),
+    )
+
+
+
+# PATCH C024.3 — Runtime profiling (non intrusif)
+runtime_profiler = GeoCoolingRuntimeProfiler()
+
+# SPRINT C025 — Operations Suite 1.0
+alarm_engine = GeoCoolingAlarmEngine()
+operations_suite = GeoCoolingOperationsSuite(
+    controller=controller,
+    health_manager=health_manager,
+    commissioning_manager=commissioning_manager,
+    commissioning_test_manager=commissioning_test_manager,
+    hardware_manual_control=hardware_manual_control,
+    operations_dashboard=operations_dashboard,
+    integration_audit=integration_audit,
+    runtime_profiler=runtime_profiler,
+    efficiency_index=efficiency_index,
+    drift_detector=drift_detector,
+    assisted_calibration=assisted_calibration,
+    digital_twin_calibration=digital_twin_calibration,
+    hardware_certification=hardware_certification,
+    alarm_engine=alarm_engine,
+)
+for _target, _method, _component in (
+    (controller.brain, "evaluate", "brain"),
+    (forecast_engine, "forecast", "forecast"),
+    (forecast_engine, "scenarios", "forecast"),
+    (operations_dashboard, "snapshot", "dashboard"),
+    (efficiency_index, "calculate", "efficiency_index"),
+    (drift_detector, "analyze", "drift_detector"),
+    (assisted_calibration, "recommendations", "assisted_calibration"),
+    (integration_audit, "evaluate", "integration_audit"),
+):
+    runtime_profiler.instrument(_target, _method, component=_component)
+
+
 # RELEASE 0.7.0 — Water Test Framework API
 @router.get("/water-test")
 def get_water_test_status():
@@ -1557,3 +1846,72 @@ def cancel_water_test(payload: dict[str, Any] | None = Body(default=None)):
     except WaterTestError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+
+
+# PATCH C024.1 — Audit d'intégration pré-commissioning (lecture seule)
+@router.get("/integration-audit")
+def get_geocooling_integration_audit(refresh: bool = True):
+    return integration_audit.evaluate() if refresh else integration_audit.status()
+
+@router.get("/integration-audit/status")
+def get_geocooling_integration_audit_status():
+    return integration_audit.status()
+
+
+# PATCH C024.3 — Profilage runtime (lecture seule)
+@router.get("/performance/runtime")
+def get_geocooling_runtime_profile():
+    return runtime_profiler.snapshot()
+
+@router.get("/performance/runtime/history")
+def get_geocooling_runtime_history(limit: int = Query(default=200, ge=1, le=2000)):
+    items = runtime_profiler.history(limit=limit)
+    return {"count": len(items), "limit": limit, "items": items}
+
+@router.get("/performance/runtime/status")
+def get_geocooling_runtime_status():
+    return runtime_profiler.status()
+
+
+# SPRINT C025 — Operations Suite 1.0
+@router.get("/operations-center")
+def get_geocooling_operations_center():
+    return operations_suite.snapshot()
+
+@router.get("/health")
+def get_geocooling_operations_health():
+    return health_manager.status()
+
+@router.get("/readiness")
+def get_geocooling_readiness():
+    return operations_suite.readiness()
+
+@router.get("/readiness/status")
+def get_geocooling_readiness_status():
+    return operations_suite.readiness()
+
+@router.get("/readiness/checklist")
+def get_geocooling_readiness_checklist():
+    return operations_suite.checklist()
+
+@router.get("/alarms")
+def get_geocooling_alarms():
+    operations_suite.snapshot()
+    return alarm_engine.snapshot()
+
+@router.get("/alarms/history")
+def get_geocooling_alarm_history(limit: int = Query(default=200, ge=1, le=2000)):
+    items = alarm_engine.history(limit=limit)
+    return {"count": len(items), "limit": limit, "items": items}
+
+@router.post("/alarms/{alarm_id}/acknowledge")
+def acknowledge_geocooling_alarm(alarm_id: str, payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    try:
+        return alarm_engine.acknowledge(alarm_id, str(payload.get("operator", "operator")), str(payload.get("note", "")))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+@router.get("/commissioning/report")
+def get_geocooling_commissioning_report():
+    return operations_suite.report()

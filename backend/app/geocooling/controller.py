@@ -19,6 +19,7 @@ from app.geocooling.models import (
     ManualCommandType,
 )
 from app.geocooling.mqtt_driver import MQTTDriver
+from app.geocooling.waveshare_modbus_driver import WaveshareModbusDriver
 from app.geocooling.predictor import GeoCoolingPredictor
 from app.geocooling.snapshot_builder import GeoCoolingSnapshotBuilder
 from app.geocooling.event_bus import GeoCoolingEventBus
@@ -68,13 +69,16 @@ class GeoCoolingController:
         if self.driver_name == "mqtt":
             self.driver = MQTTDriver()
             self.mode = GeoCoolingMode.MANUAL
+        elif self.driver_name == "waveshare_modbus":
+            self.driver = WaveshareModbusDriver()
+            self.mode = GeoCoolingMode.MANUAL
         elif self.driver_name == "simulation":
             self.driver = SimulationDriver()
             self.mode = GeoCoolingMode.SIMULATION
         else:
             raise RuntimeError(
-                "GEOCOOLING_DRIVER doit être "
-                "'simulation' ou 'mqtt'."
+                "GEOCOOLING_DRIVER doit être 'simulation', "
+                "'mqtt' ou 'waveshare_modbus'."
             )
 
         self.device_manager = DeviceManager(

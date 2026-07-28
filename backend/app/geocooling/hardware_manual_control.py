@@ -1,0 +1,111 @@
+"""Pilotage matériel manuel sécurisé du GeoCooling."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+ARM_CONFIRMATION = "J'ARME LE GEOCOOLING"
+
+
+def utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class HardwareManualControl:
+    """Façade API pour les opérations directes sur les actionneurs.
+
+    Les commandes d'activation nécessitent un pilote Waveshare armé.
+    Les commandes d'arrêt restent disponibles même lorsque le pilote est
+    désarmé. Le désarmement impose systématiquement l'état sûr.
+    """
+
+    def __init__(self, controller: Any) -> None:
+        self.controller = controller
+        self.last_action: dict[str, Any] | None = None
+
+    @property
+    def driver(self) -> Any:
+        return self.controller.driver
+
+    def _require_waveshare(self) -> None:
+        if getattr(self.controller, "driver_name", "") != "waveshare_modbus":
+            raise RuntimeError(
+                "Le pilotage matériel direct exige GEOCOOLING_DRIVER=waveshare_modbus."
+            )
+
+    def _record(self, action: str, requested_by: str) -> None:
+        self.last_action = {
+            "action": action,
+            "requested_by": requested_by,
+            "at": utc_iso(),
+        }
+
+    def status(self) -> dict[str, Any]:
+        driver_status = self.driver.status()
+        return {
+            "component": "geocooling",
+            "view": "manual_hardware_control",
+            "driver_name": getattr(self.controller, "driver_name", None),
+            "armed": bool(driver_status.get("armed", False)),
+            "connected": bool(driver_status.get("connected", False)),
+            "ready": bool(driver_status.get("ready", False)),
+            "valve_open": bool(driver_status.get("valve_open", False)),
+            "pump_running": bool(driver_status.get("pump_running", False)),
+            "controller": {
+                "mode": self.controller.mode.value,
+                "state": self.controller.state.value,
+            },
+            "last_action": self.last_action,
+            "driver": driver_status,
+        }
+
+    def arm(self, *, confirmation: str, requested_by: str) -> dict[str, Any]:
+        self._require_waveshare()
+        if confirmation.strip() != ARM_CONFIRMATION:
+            raise ValueError(
+                f"Confirmation invalide. Valeur requise : {ARM_CONFIRMATION}"
+            )
+        self.driver.set_armed(True)
+        self._record("ARM", requested_by)
+        return self.status()
+
+    def disarm(self, *, requested_by: str) -> dict[str, Any]:
+        self._require_waveshare()
+        self.driver.set_armed(False)
+        self._record("DISARM", requested_by)
+        return self.status()
+
+    def valve_open(self, *, requested_by: str) -> dict[str, Any]:
+        self._require_waveshare()
+        self.driver.open_valve()
+        self._record("VALVE_OPEN", requested_by)
+        return self.status()
+
+    def valve_close(self, *, requested_by: str) -> dict[str, Any]:
+        self._require_waveshare()
+        if bool(self.driver.status().get("pump_running", False)):
+            raise RuntimeError(
+                "Fermeture de vanne refusée : arrêter d'abord le circulateur."
+            )
+        self.driver.close_valve()
+        self._record("VALVE_CLOSE", requested_by)
+        return self.status()
+
+    def pump_start(self, *, requested_by: str) -> dict[str, Any]:
+        self._require_waveshare()
+        self.driver.start_pump()
+        self._record("PUMP_START", requested_by)
+        return self.status()
+
+    def pump_stop(self, *, requested_by: str) -> dict[str, Any]:
+        self._require_waveshare()
+        self.driver.stop_pump()
+        self._record("PUMP_STOP", requested_by)
+        return self.status()
+
+    def safe_stop(self, *, requested_by: str) -> dict[str, Any]:
+        self._require_waveshare()
+        self.driver.force_safe_state()
+        self._record("SAFE_STOP", requested_by)
+        return self.status()

@@ -1,0 +1,7 @@
+services:
+  backend:
+    environment:
+      GEOCOOLING_DATA_DIR: /app/data/geocooling
+      GEOCOOLING_BRAIN_JOURNAL_PATH: /app/data/geocooling/brain-decisions.jsonl
+    volumes:
+      - ./data/geocooling:/app/data/geocooling

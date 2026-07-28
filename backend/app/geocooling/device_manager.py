@@ -79,6 +79,27 @@ class DeviceManager:
             )
         )
 
+        if driver_status.get("driver") == "waveshare_modbus":
+            armed = bool(driver_status.get("armed", False))
+            ready = connected and armed
+            return {
+                "ready": ready,
+                "simulation": False,
+                "connected": connected,
+                "online": connected,
+                "heartbeat_fresh": connected,
+                "reason": (
+                    "Waveshare Modbus disponible et armé"
+                    if ready
+                    else (
+                        "Waveshare Modbus disponible mais désarmé"
+                        if connected
+                        else "Waveshare Modbus inaccessible"
+                    )
+                ),
+                "driver": driver_status,
+            }
+
         online = bool(
             driver_status.get(
                 "device_online",

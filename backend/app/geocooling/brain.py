@@ -2,8 +2,11 @@ from __future__ import annotations
 import functools
 
 import math
+import time
+import uuid
+from collections import deque
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,10 +17,12 @@ def utc_now() -> datetime:
 
 from app.geocooling.capabilities import GeoCoolingCapabilities
 from app.geocooling.decision_context import GeoCoolingDecisionContext
+from app.geocooling.decision_journal import GeoCoolingDecisionJournal
 from app.geocooling.energy_model import GeoCoolingEnergyModel
 from app.geocooling.operating_mode_tracker import OperatingModeTracker
 @dataclass(frozen=True, slots=True)
 class BrainDecision:
+    decision_id: str
     decision: str
     confidence: int
     comfort_score: int
@@ -38,6 +43,8 @@ class BrainDecision:
     predicted_temperature_3h_c: float | None
     predicted_temperature_6h_c: float | None
     generated_at: datetime
+    evaluated_in_ms: float
+    explanation: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -88,6 +95,12 @@ class GeoCoolingBrain:
             degradation_cycles=self.operating_mode_degradation_cycles,
             recovery_cycles=self.operating_mode_recovery_cycles,
         )
+        self._decision_history: deque[dict[str, Any]] = deque(
+            maxlen=max(1, int(os.getenv("GEOCOOLING_BRAIN_HISTORY_SIZE", "200")))
+        )
+        self._decision_journal = GeoCoolingDecisionJournal()
+        for item in self._decision_journal.load_recent(self._decision_history.maxlen or 200):
+            self._decision_history.append(item)
 
     @staticmethod
     def _number(value: Any) -> float | None:
@@ -491,6 +504,7 @@ class GeoCoolingBrain:
         # Déduplication stable pour garder une réponse lisible.
         unique_reasons = tuple(dict.fromkeys(reason for reason in reasons if reason))
         return BrainDecision(
+            decision_id="pending",
             decision=decision,
             confidence=self._clamp(confidence),
             comfort_score=comfort_score,
@@ -511,6 +525,8 @@ class GeoCoolingBrain:
             predicted_temperature_3h_c=predicted_3h,
             predicted_temperature_6h_c=predicted_6h,
             generated_at=utc_now(),
+            evaluated_in_ms=0.0,
+            explanation={},
         )
 
     def configuration(self) -> dict[str, Any]:
@@ -724,17 +740,157 @@ class GeoCoolingBrain:
         except Exception:
             return None
 
+    @staticmethod
+    def _explanation(result: BrainDecision) -> dict[str, Any]:
+        contributors = [
+            {
+                "name": "Besoin de confort",
+                "score": result.comfort_score,
+                "impact": "positive" if result.comfort_score >= 35 else "neutral",
+            },
+            {
+                "name": "Potentiel de refroidissement",
+                "score": result.cooling_score,
+                "impact": "positive" if result.cooling_score >= 35 else "neutral",
+            },
+            {
+                "name": "Performance énergétique",
+                "score": result.energy_score,
+                "confidence": result.energy_confidence,
+                "impact": "positive" if result.energy_score >= 35 else "neutral",
+            },
+        ]
+        blocking = []
+        if result.decision == "BLOCKED":
+            blocking = [{"priority": 1, "reason": reason} for reason in result.reason]
+        elif result.decision in {"WAIT", "STOP"}:
+            markers = ("interdit", "insuffisant", "condensation", "anti-court-cycle", "atteinte")
+            blocking = [
+                {"priority": index + 1, "reason": reason}
+                for index, reason in enumerate(
+                    reason for reason in result.reason
+                    if any(marker in reason.lower() for marker in markers)
+                )
+            ]
+        recommendations = {
+            "START": "Lancer un cycle de refroidissement.",
+            "MAINTAIN": "Maintenir le refroidissement en cours.",
+            "STOP": "Arrêter le refroidissement de manière sécurisée.",
+            "WAIT": "Attendre avant une nouvelle décision.",
+            "BLOCKED": "Corriger le blocage avant tout démarrage.",
+        }
+        return {
+            "summary": result.reason[0] if result.reason else result.decision,
+            "contributors": contributors,
+            "blocking_conditions": blocking,
+            "recommendation": recommendations.get(result.decision, "Surveiller le système."),
+            "primary_reason": result.reason[0] if result.reason else None,
+        }
+
+    def decision_history(self, limit: int = 200) -> list[dict[str, Any]]:
+        normalized = max(1, min(int(limit), self._decision_history.maxlen or 200))
+        return list(self._decision_history)[-normalized:][::-1]
+
+    def decision_journal(self, limit: int = 500) -> list[dict[str, Any]]:
+        return self._decision_journal.read(limit)
+
+    def decision_journal_status(self) -> dict[str, Any]:
+        status = self._decision_journal.status()
+        status["memory_history_count"] = len(self._decision_history)
+        status["memory_history_capacity"] = self._decision_history.maxlen or 200
+        return status
+
+    def decision_metrics(self) -> dict[str, Any]:
+        """Agrège les décisions présentes dans l'historique mémoire."""
+        items = list(self._decision_history)
+        if not items:
+            return {
+                "sample_count": 0,
+                "history_capacity": self._decision_history.maxlen or 200,
+                "decision_counts": {},
+                "blocked_count": 0,
+                "blocking_reasons": [],
+                "average_total_score": None,
+                "average_confidence": None,
+                "compute_ms": {"minimum": None, "average": None, "p95": None, "maximum": None},
+                "latest": None,
+            }
+
+        def average(values: list[float]) -> float | None:
+            return round(sum(values) / len(values), 3) if values else None
+
+        def percentile95(values: list[float]) -> float | None:
+            if not values:
+                return None
+            ordered = sorted(values)
+            index = max(0, math.ceil(0.95 * len(ordered)) - 1)
+            return round(ordered[index], 3)
+
+        decision_counts: dict[str, int] = {}
+        blocking_counts: dict[str, int] = {}
+        confidences: list[float] = []
+        scores: list[float] = []
+        durations: list[float] = []
+
+        for item in items:
+            decision = str(item.get("decision") or "UNKNOWN")
+            decision_counts[decision] = decision_counts.get(decision, 0) + 1
+            if isinstance(item.get("confidence"), (int, float)):
+                confidences.append(float(item["confidence"]))
+            if isinstance(item.get("total_score"), (int, float)):
+                scores.append(float(item["total_score"]))
+            if isinstance(item.get("evaluated_in_ms"), (int, float)):
+                durations.append(float(item["evaluated_in_ms"]))
+            explanation = item.get("explanation") or {}
+            for condition in explanation.get("blocking_conditions") or []:
+                reason = str(condition.get("reason") or "Blocage non précisé")
+                blocking_counts[reason] = blocking_counts.get(reason, 0) + 1
+
+        blocking_reasons = [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(
+                blocking_counts.items(), key=lambda pair: (-pair[1], pair[0])
+            )
+        ]
+        latest = items[-1]
+        return {
+            "sample_count": len(items),
+            "history_capacity": self._decision_history.maxlen or 200,
+            "decision_counts": dict(sorted(decision_counts.items())),
+            "blocked_count": decision_counts.get("BLOCKED", 0),
+            "blocking_reasons": blocking_reasons,
+            "average_total_score": average(scores),
+            "average_confidence": average(confidences),
+            "compute_ms": {
+                "minimum": round(min(durations), 3) if durations else None,
+                "average": average(durations),
+                "p95": percentile95(durations),
+                "maximum": round(max(durations), 3) if durations else None,
+            },
+            "latest": {
+                "decision_id": latest.get("decision_id"),
+                "decision": latest.get("decision"),
+                "confidence": latest.get("confidence"),
+                "total_score": latest.get("total_score"),
+                "generated_at": latest.get("generated_at"),
+            },
+        }
+
     @functools.wraps(_c0123r4_original_evaluate)
     def evaluate(self, *args, **kwargs):
-        """
-        Exécute evaluate() historique puis publie brain.decision.
-        """
-
-        result = self._c0123r4_original_evaluate(
-            *args,
-            **kwargs,
+        """Exécute, explique, historise puis publie la décision Brain."""
+        started = time.perf_counter()
+        raw = self._c0123r4_original_evaluate(*args, **kwargs)
+        decision_id = f"brain-{uuid.uuid4().hex[:12]}"
+        elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
+        result = replace(
+            raw,
+            decision_id=decision_id,
+            evaluated_in_ms=elapsed_ms,
+            explanation=self._explanation(raw),
         )
-
+        payload = result.as_dict()
+        self._decision_history.append(payload)
+        self._decision_journal.append(payload)
         self._c0123r4_publish_brain_decision(result)
-
         return result
