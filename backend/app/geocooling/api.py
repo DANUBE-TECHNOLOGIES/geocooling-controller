@@ -2515,3 +2515,31 @@ def post_industrial_platform_mission_stop(payload: dict[str, Any] = Body(default
 @router.get("/industrial-platform/mission-supervisor/history")
 def get_industrial_platform_mission_history(limit: int = Query(default=20, ge=1, le=100)):
     return industrial_platform.mission_supervisor.missions(limit)
+
+
+
+# SPRINT H023 — Hardware readiness without physical activation
+@router.get("/industrial-platform/hardware-readiness")
+def get_industrial_platform_hardware_readiness():
+    return industrial_platform.hardware_readiness.status()
+
+@router.post("/industrial-platform/hardware-readiness/dry-run")
+def post_industrial_platform_hardware_readiness_dry_run():
+    return industrial_platform.hardware_readiness.dry_run_sequence()
+
+
+# SPRINT H024 — Non-invasive field wiring certification
+@router.get("/industrial-platform/field-certification")
+def get_industrial_platform_field_certification():
+    return industrial_platform.field_certification.status()
+
+@router.post("/industrial-platform/field-certification/evaluate")
+def post_industrial_platform_field_certification(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_platform.field_certification.evaluate(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+@router.get("/industrial-platform/field-certification/history")
+def get_industrial_platform_field_certification_history(limit: int = Query(default=20, ge=1, le=100)):
+    return industrial_platform.field_certification.certificates(limit)
