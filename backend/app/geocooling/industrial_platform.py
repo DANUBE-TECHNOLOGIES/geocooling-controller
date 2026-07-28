@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.geocooling.brain_v4 import GeoCoolingBrainV4
+from app.geocooling.operational_advisory import GeoCoolingOperationalAdvisor, GeoCoolingTelemetryHub
 
 import copy
 import json
@@ -209,6 +210,8 @@ class GeoCoolingIndustrialPlatform:
         self.safety = GeoCoolingSafetyManager(self.hardware, self.events)
         self.brain_v3 = GeoCoolingBrainAdvisorV3()
         self.brain_v4 = GeoCoolingBrainV4()
+        self.telemetry = GeoCoolingTelemetryHub(self.brain_v4, self.events)
+        self.operational_advisor = GeoCoolingOperationalAdvisor()
         self.commissioning = GeoCoolingCommissioningEngine(self)
 
     def diagnostics(self) -> dict[str, Any]:
@@ -253,38 +256,47 @@ class GeoCoolingSafetyManager:
 
     def evaluate(self, thermal: dict[str, Any] | None = None) -> dict[str, Any]:
         data = self._latest(thermal)
+        hardware = self.hardware.status()
+        simulation = bool(hardware.get("simulation", True))
         checks: list[dict[str, Any]] = []
 
-        def minimum(name: str, field: str, limit: float, *, required: bool = False) -> None:
+        def add_check(name: str, field: str, operator: str, limit: float, *, required_when_physical: bool = True) -> None:
             value = data.get(field)
-            passed = value is not None and float(value) >= limit if required else value is None or float(value) >= limit
-            checks.append({"name": name, "field": field, "value": value, "operator": ">=", "limit": limit, "pass": passed})
+            if value is None:
+                status = "UNKNOWN" if simulation or not required_when_physical else "FAIL"
+                passed: bool | None = None if status == "UNKNOWN" else False
+            else:
+                numeric = float(value)
+                passed = numeric >= limit if operator == ">=" else numeric <= limit
+                status = "PASS" if passed else "FAIL"
+            checks.append({
+                "name": name, "field": field, "value": value, "operator": operator,
+                "limit": limit, "status": status, "pass": passed,
+            })
 
-        def maximum(name: str, field: str, limit: float) -> None:
-            value = data.get(field)
-            passed = value is None or float(value) <= limit
-            checks.append({"name": name, "field": field, "value": value, "operator": "<=", "limit": limit, "pass": passed})
+        add_check("source-in-temperature", "source_in_temperature_c", ">=", self.limits["minimum_source_in_c"])
+        add_check("source-out-temperature", "source_out_temperature_c", "<=", self.limits["maximum_source_out_c"])
+        add_check("supply-temperature-minimum", "supply_temperature_c", ">=", self.limits["minimum_supply_c"])
+        add_check("supply-temperature-maximum", "supply_temperature_c", "<=", self.limits["maximum_supply_c"])
+        if hardware.get("pump_running"):
+            add_check("flow-while-pump-running", "flow_l_min", ">=", self.limits["minimum_flow_l_min"])
+        add_check("condensation-margin", "condensation_margin_c", ">=", self.limits["minimum_condensation_margin_c"])
 
-        minimum("source-in-temperature", "source_in_temperature_c", self.limits["minimum_source_in_c"])
-        maximum("source-out-temperature", "source_out_temperature_c", self.limits["maximum_source_out_c"])
-        minimum("supply-temperature", "supply_temperature_c", self.limits["minimum_supply_c"])
-        maximum("supply-temperature", "supply_temperature_c", self.limits["maximum_supply_c"])
-        if self.hardware.status().get("pump_running"):
-            minimum("flow-while-pump-running", "flow_l_min", self.limits["minimum_flow_l_min"], required=True)
-        margin = data.get("condensation_margin_c")
-        checks.append({
-            "name": "condensation-margin", "field": "condensation_margin_c", "value": margin,
-            "operator": ">=", "limit": self.limits["minimum_condensation_margin_c"],
-            "pass": margin is None or float(margin) >= self.limits["minimum_condensation_margin_c"],
-        })
-        failures = [check for check in checks if not check["pass"]]
+        failures = [check for check in checks if check["status"] == "FAIL"]
+        unknown = [check for check in checks if check["status"] == "UNKNOWN"]
         safe = not failures and not self._emergency_stop
         if not safe:
             self.hardware.adapter.force_safe_state()
-            self.journal.record("safety", "safe_state_forced", level="CRITICAL" if self._emergency_stop else "ERROR", details={"failures": failures, "emergency_stop": self._emergency_stop})
+            self.journal.record(
+                "safety", "safe_state_forced",
+                level="CRITICAL" if self._emergency_stop else "ERROR",
+                details={"failures": failures, "emergency_stop": self._emergency_stop},
+            )
         self._last_report = {
-            "generated_at": utc_now_iso(), "version": self.VERSION, "safe": safe,
-            "emergency_stop": self._emergency_stop, "failures": failures, "checks": checks,
+            "generated_at": utc_now_iso(), "version": "H010.1-SAFETY-STRICT-1.0",
+            "safe": safe, "sensor_data_status": "COMPLETE" if not unknown else "UNKNOWN",
+            "physical_mode": not simulation, "emergency_stop": self._emergency_stop,
+            "failures": failures, "unknown_checks": unknown, "checks": checks,
             "hardware_safe_state": not self.hardware.status().get("pump_running") and not self.hardware.status().get("valve_open"),
         }
         return copy.deepcopy(self._last_report)

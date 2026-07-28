@@ -92,3 +92,30 @@ def test_brain_v3_never_authorizes_physical_command():
     assert result["recommended_action"] == "START"
     assert result["physical_command_authorized"] is False
     assert result["learning_mode"] == "OBSERVE_ONLY"
+
+
+def test_safety_missing_values_are_unknown_in_simulation(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEOCOOLING_EVENT_JOURNAL_PATH", str(tmp_path / "events.jsonl"))
+    platform = GeoCoolingIndustrialPlatform(controller=FakeController(), hardening=FakeHardening())
+    report = platform.safety.evaluate({})
+    assert report["safe"] is True
+    assert report["sensor_data_status"] == "UNKNOWN"
+    assert report["unknown_checks"]
+    assert all(item["status"] == "UNKNOWN" for item in report["unknown_checks"])
+
+
+def test_operational_plan_is_advisory_and_disarmed(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEOCOOLING_EVENT_JOURNAL_PATH", str(tmp_path / "events.jsonl"))
+    platform = GeoCoolingIndustrialPlatform(controller=FakeController(), hardening=FakeHardening())
+    brain = {
+        "recommended_action": "COOL", "recommended_runtime_minutes": 30,
+        "blocking_conditions": [],
+        "hydraulic_sequence": {"valve_lead_seconds": 20, "pump_overrun_seconds": 30},
+    }
+    plan = platform.operational_advisor.build_plan(
+        brain=brain, safety={"safe": True}, hardware=platform.hardware.status()
+    )
+    assert plan["plan_status"] == "READY_ADVISORY"
+    assert [step["action"] for step in plan["steps"]] == ["OPEN_VALVE", "START_PUMP", "STOP_PUMP", "CLOSE_VALVE"]
+    assert plan["physical_command_authorized"] is False
+    assert plan["hardware_touched"] is False
