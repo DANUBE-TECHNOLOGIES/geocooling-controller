@@ -2447,3 +2447,13 @@ def post_industrial_platform_mission_stop(payload: dict[str, Any] = Body(default
 @router.get("/industrial-platform/mission-supervisor/history")
 def get_industrial_platform_mission_history(limit: int = Query(default=20, ge=1, le=100)):
     return industrial_platform.mission_supervisor.missions(limit)
+
+
+# SPRINT H023 — Hardware readiness without physical activation
+@router.get("/industrial-platform/hardware-readiness")
+def get_industrial_platform_hardware_readiness():
+    return industrial_platform.hardware_readiness.status()
+
+@router.post("/industrial-platform/hardware-readiness/dry-run")
+def post_industrial_platform_hardware_readiness_dry_run():
+    return industrial_platform.hardware_readiness.dry_run_sequence()
