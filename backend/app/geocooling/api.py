@@ -2181,3 +2181,28 @@ def get_industrial_platform_field_readiness():
         "safety": safety,
         "commissioning": commissioning,
     }
+
+# SPRINT H014 — persistent anomaly detection and operational availability
+@router.get("/industrial-platform/operational-availability")
+def get_industrial_platform_operational_availability():
+    telemetry = industrial_platform.telemetry.status()
+    quality = industrial_platform.data_quality.assess(telemetry.get("latest"), telemetry.get("previous"))
+    hardware = industrial_platform.hardware.status()
+    safety = industrial_platform.safety.evaluate(controller.thermal_status())
+    confidence = industrial_platform.operational_confidence.evaluate(
+        latest=telemetry.get("latest"),
+        previous=telemetry.get("previous"),
+        quality=quality,
+        physical_mode=not bool(hardware.get("simulation", True)),
+    )
+    return industrial_platform.operational_availability.evaluate(
+        confidence=confidence,
+        quality=quality,
+        safety=safety,
+        hardware=hardware,
+    )
+
+
+@router.get("/industrial-platform/operational-availability/history")
+def get_industrial_platform_operational_availability_history(limit: int = Query(default=20, ge=1, le=100)):
+    return industrial_platform.operational_availability.history(limit)
