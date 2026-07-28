@@ -232,7 +232,7 @@ class GeoCoolingIndustrialHardening:
     def probe(self) -> dict[str, Any]:
         probes = {
             "controller": self._safe(self.controller.status),
-            "watchdog": self._safe(self.watchdog.status),
+            "watchdog": self._safe(self.watchdog.evaluate),
             "runtime": self._safe(self.runtime.status),
             "integration_audit": self._safe(self.integration_audit.status),
             "runtime_profiler": self._safe(self.runtime_profiler.status),
