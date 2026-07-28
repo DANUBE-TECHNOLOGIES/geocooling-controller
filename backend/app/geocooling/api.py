@@ -43,6 +43,7 @@ from app.geocooling.integration_audit import GeoCoolingIntegrationAudit
 from app.geocooling.runtime_profiler import GeoCoolingRuntimeProfiler
 from app.geocooling.alarm_engine import GeoCoolingAlarmEngine
 from app.geocooling.operations_suite import GeoCoolingOperationsSuite
+from app.geocooling.industrial_hardening import GeoCoolingIndustrialHardening, TransactionStep
 
 router = APIRouter(prefix="/geocooling", tags=["GeoCooling"])
 controller = GeoCoolingController()
@@ -1744,6 +1745,16 @@ operations_suite = GeoCoolingOperationsSuite(
     hardware_certification=hardware_certification,
     alarm_engine=alarm_engine,
 )
+industrial_hardening = GeoCoolingIndustrialHardening(
+    controller=controller,
+    watchdog=watchdog,
+    runtime=runtime,
+    integration_audit=integration_audit,
+    runtime_profiler=runtime_profiler,
+    operations_suite=operations_suite,
+    hardware_manual_control=hardware_manual_control,
+)
+setattr(controller, "industrial_hardening", industrial_hardening)
 for _target, _method, _component in (
     (controller.brain, "evaluate", "brain"),
     (forecast_engine, "forecast", "forecast"),
@@ -1915,3 +1926,49 @@ def acknowledge_geocooling_alarm(alarm_id: str, payload: dict[str, Any] | None =
 @router.get("/commissioning/report")
 def get_geocooling_commissioning_report():
     return operations_suite.report()
+
+
+# SPRINT H001 — Industrial hardening
+@router.get("/hardening")
+def get_geocooling_hardening_status():
+    return industrial_hardening.status()
+
+@router.get("/hardening/probe")
+def probe_geocooling_components():
+    return industrial_hardening.probe()
+
+@router.get("/hardening/watchdog")
+def get_geocooling_hardening_watchdog():
+    probe = industrial_hardening.probe()
+    return industrial_hardening.evaluate_safe_mode(probe)
+
+@router.post("/hardening/safe-mode")
+def activate_geocooling_safe_mode(payload: dict[str, Any] = Body(...)):
+    try:
+        return industrial_hardening.safe_mode.activate(
+            reason=str(payload.get("reason", "")),
+            activated_by=str(payload.get("operator", "operator")),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+@router.post("/hardening/safe-mode/clear")
+def clear_geocooling_safe_mode(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    return industrial_hardening.safe_mode.clear(str(payload.get("operator", "operator")))
+
+@router.get("/hardening/transactions")
+def get_geocooling_transaction_history(limit: int = Query(default=100, ge=1, le=1000)):
+    items = industrial_hardening.transactions.history(limit)
+    return {"count": len(items), "items": items}
+
+@router.post("/hardening/transactions/dry-run")
+def dry_run_geocooling_transaction(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
+    names = payload.get("steps") or ["validate", "prepare", "commit"]
+    steps = [TransactionStep(name=str(name), action=lambda: None) for name in names]
+    return industrial_hardening.transactions.execute(str(payload.get("name", "api-dry-run")), steps, dry_run=True)
+
+@router.get("/software-certification")
+def get_geocooling_software_certification(refresh: bool = True):
+    return industrial_hardening.certification(refresh=refresh)
