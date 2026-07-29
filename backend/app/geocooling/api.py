@@ -487,9 +487,42 @@ def get_safety() -> dict:
 
 
 @router.put("/thermal-snapshot")
+
+# C020.1R4 DIGITAL TWIN LIVE FEED
+def _c020_digital_twin_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    aliases = {
+        "indoor_temperature_c": ("indoor_temperature_c", "indoor", "indoor_temperature"),
+        "upstairs_temperature_c": ("upstairs_temperature_c", "upstairs", "upstairs_temperature"),
+        "outdoor_temperature_c": ("outdoor_temperature_c", "outdoor", "outdoor_temperature"),
+        "indoor_humidity_percent": ("indoor_humidity_percent", "humidity", "indoor_humidity"),
+        "floor_surface_temperature_c": ("floor_surface_temperature_c", "surface", "surface_temperature"),
+        "supply_temperature_c": ("supply_temperature_c", "supply", "supply_temperature"),
+        "return_temperature_c": ("return_temperature_c", "return", "return_temperature"),
+        "source_in_temperature_c": ("source_in_temperature_c", "source_in", "source_in_temperature"),
+        "source_out_temperature_c": ("source_out_temperature_c", "source_out", "source_out_temperature"),
+        "flow_l_min": ("flow_l_min", "flow", "flow_rate_l_min"),
+        "pump_running": ("pump_running", "pump"),
+        "valve_open": ("valve_open", "valve"),
+        "measured_at": ("measured_at", "timestamp", "captured_at"),
+    }
+
+    normalized: dict[str, Any] = {}
+    for target, candidates in aliases.items():
+        for candidate in candidates:
+            if candidate in payload and payload[candidate] is not None:
+                normalized[target] = payload[candidate]
+                break
+    return normalized
+
+
 def put_thermal_snapshot(payload: dict[str, Any] = Body(...)) -> dict:
     try:
-        return controller.ingest_thermal_snapshot(payload)
+        result = controller.ingest_thermal_snapshot(payload)
+        # C020.1R4 DIGITAL TWIN LIVE FEED
+        industrial_platform.digital_twin.update(
+            _c020_digital_twin_snapshot_payload(payload)
+        )
+        return result
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
