@@ -24,6 +24,7 @@ from collections import Counter, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from app.geocooling.digital_twin import GeoCoolingDigitalTwin
 
 
 def utc_now_iso() -> str:
@@ -214,6 +215,7 @@ class GeoCoolingIndustrialPlatform:
     VERSION = "H003-H006-1.0"
 
     def __init__(self, *, controller: Any, hardening: Any, physical_factory: Callable[[], Any] | None = None) -> None:
+        self.digital_twin = GeoCoolingDigitalTwin()
         self.controller = controller
         self.hardening = hardening
         self.events = GeoCoolingEventJournal()
