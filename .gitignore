@@ -33,3 +33,11 @@ backup/
 .idea/
 *.bak
 *.bak-*
+*.p12
+*.pfx
+*.crt
+node_modules/
+.next/
+dist/
+build/
+coverage/
