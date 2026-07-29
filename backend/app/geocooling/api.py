@@ -2543,3 +2543,8 @@ def post_industrial_platform_field_certification(payload: dict[str, Any] = Body(
 @router.get("/industrial-platform/field-certification/history")
 def get_industrial_platform_field_certification_history(limit: int = Query(default=20, ge=1, le=100)):
     return industrial_platform.field_certification.certificates(limit)
+
+
+@router.get("/geocooling/industrial-platform/digital-twin")
+def get_geocooling_industrial_platform_digital_twin():
+    return industrial_platform.digital_twin.status()
