@@ -55,7 +55,16 @@ class GeoCoolingDigitalTwin:
         "source_in_temperature_c", "source_out_temperature_c", "flow_l_min",
     )
 
-    def __init__(self, path: str | None = None) -> None:
+    def __init__(
+        self,
+        path: str | None = None,
+        *,
+        controller: Any | None = None,
+        event_bus: Any | None = None,
+    ) -> None:
+        # C020.1R5R9 — runtime dependencies
+        self.controller = controller
+        self.event_bus = event_bus
         base = Path(os.getenv("GEOCOOLING_DATA_DIR", "/app/data/geocooling"))
         self.path = Path(path or os.getenv(
             "GEOCOOLING_DIGITAL_TWIN_PATH",
@@ -178,6 +187,7 @@ class GeoCoolingDigitalTwin:
             "return_temperature_c": v.return_temperature_c,
             "source_in_temperature_c": v.source_in_temperature_c,
             "source_out_temperature_c": v.source_out_temperature_c,
+            "flow_l_min": v.flow_l_min,
             "secondary_delta_t_c": round(v.return_temperature_c - v.supply_temperature_c, 2) if v.return_temperature_c is not None and v.supply_temperature_c is not None else None,
             "source_delta_t_c": round(v.source_out_temperature_c - v.source_in_temperature_c, 2) if v.source_out_temperature_c is not None and v.source_in_temperature_c is not None else None,
             "dew_point_c": dew,
@@ -211,3 +221,30 @@ class GeoCoolingDigitalTwin:
             result = copy.deepcopy(self._state)
             result["hardware_touched"] = False
             return result
+
+
+    # ------------------------------------------------------------------
+    # Compatibility layer (API 0.7.x)
+    # ------------------------------------------------------------------
+
+    def snapshot(self, refresh: bool = True):
+        """
+        Compatibilité API >=0.7
+        """
+        if refresh:
+            try:
+                self.refresh(trigger="snapshot")
+            except Exception:
+                pass
+
+        return self.status()
+
+    def refresh(self, trigger: str = "manual"):
+        """
+        Compatibilité API >=0.7
+
+        Le vrai calcul est effectué lors des update().
+        Ici on renvoie simplement l'état courant.
+        """
+
+        return self.status()

@@ -1,7 +1,11 @@
 from typing import Any
+from datetime import datetime, timezone
+import csv
+import io
+import json
 
 from fastapi import APIRouter, Body, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.geocooling.controller import GeoCoolingController
 from app.geocooling.health_manager import GeoCoolingHealthManager
@@ -46,8 +50,10 @@ from app.geocooling.operations_suite import GeoCoolingOperationsSuite
 from app.geocooling.industrial_hardening import GeoCoolingIndustrialHardening, TransactionStep
 from app.geocooling.industrial_platform import GeoCoolingIndustrialPlatform, utc_now_iso
 from app.geocooling.waveshare_modbus_driver import WaveshareModbusDriver
+from app.geocooling.brain_v2.api import router as brain_v2_router
 
 router = APIRouter(prefix="/geocooling", tags=["GeoCooling"])
+router.include_router(brain_v2_router)
 controller = GeoCoolingController()
 health_manager = GeoCoolingHealthManager(controller)
 commissioning_manager = GeoCoolingCommissioningManager(controller, health_manager)
@@ -486,8 +492,6 @@ def get_safety() -> dict:
     return controller.status()["safety"]
 
 
-@router.put("/thermal-snapshot")
-
 # C020.1R4 DIGITAL TWIN LIVE FEED
 def _c020_digital_twin_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
     aliases = {
@@ -515,13 +519,16 @@ def _c020_digital_twin_snapshot_payload(payload: dict[str, Any]) -> dict[str, An
     return normalized
 
 
+@router.put("/thermal-snapshot")
 def put_thermal_snapshot(payload: dict[str, Any] = Body(...)) -> dict:
     try:
         result = controller.ingest_thermal_snapshot(payload)
-        # C020.1R4 DIGITAL TWIN LIVE FEED
-        industrial_platform.digital_twin.update(
-            _c020_digital_twin_snapshot_payload(payload)
-        )
+        # C020.1R5R11 — feed both runtime Digital Twin instances
+        normalized_twin_payload = _c020_digital_twin_snapshot_payload(payload)
+
+        digital_twin.update(normalized_twin_payload)
+        industrial_platform.digital_twin.update(normalized_twin_payload)
+
         return result
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -592,6 +599,1560 @@ def get_prediction() -> dict:
 @router.get("/home-assistant")
 def get_home_assistant_status() -> dict:
     return controller.home_assistant_status()
+
+
+
+
+# ============================================================================
+# C021.1 — UNIFIED BRAIN DASHBOARD API
+# ============================================================================
+
+def _c021_safe_section(
+    name: str,
+    provider,
+    *,
+    default=None,
+) -> dict[str, Any]:
+    """
+    Exécute un fournisseur de données sans rendre indisponible le dashboard
+    si un sous-système est momentanément absent ou incompatible.
+
+    Aucun appel matériel ni aucune commande ne sont exécutés ici.
+    """
+    try:
+        value = provider()
+
+        if value is None:
+            value = default if default is not None else {}
+
+        return {
+            "available": True,
+            "data": value,
+            "error": None,
+        }
+
+    except Exception as exc:
+        return {
+            "available": False,
+            "data": default if default is not None else {},
+            "error": {
+                "component": name,
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+
+def _c021_extract_alerts(sections: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+
+    for section_name, section in sections.items():
+        if not section.get("available", False):
+            error = section.get("error") or {}
+            alerts.append(
+                {
+                    "level": "WARNING",
+                    "code": "COMPONENT_UNAVAILABLE",
+                    "component": section_name,
+                    "message": error.get("message") or "Composant indisponible",
+                }
+            )
+
+    twin = sections.get("digital_twin", {}).get("data") or {}
+
+    condensation_risk = twin.get("condensation_risk")
+    if condensation_risk in {"WATCH", "HIGH", "CRITICAL"}:
+        alerts.append(
+            {
+                "level": (
+                    "CRITICAL"
+                    if condensation_risk == "CRITICAL"
+                    else "WARNING"
+                ),
+                "code": "CONDENSATION_RISK",
+                "component": "digital_twin",
+                "message": (
+                    "Risque de condensation détecté : "
+                    f"{condensation_risk}"
+                ),
+                "margin_c": twin.get("condensation_margin_c"),
+            }
+        )
+
+    observations = twin.get("observations") or []
+    for observation in observations:
+        alerts.append(
+            {
+                "level": "WARNING",
+                "code": str(observation),
+                "component": "digital_twin",
+                "message": str(observation).replace("_", " ").title(),
+            }
+        )
+
+    thermal = sections.get("thermal", {}).get("data") or {}
+    safety = thermal.get("safety") if isinstance(thermal, dict) else None
+
+    if isinstance(safety, dict) and safety.get("safe") is False:
+        alerts.append(
+            {
+                "level": "CRITICAL",
+                "code": "THERMAL_SAFETY_BLOCK",
+                "component": "thermal",
+                "message": safety.get("reason") or "Sécurité thermique active",
+            }
+        )
+
+    return alerts
+
+
+@router.get("/brain/dashboard")
+def get_brain_dashboard() -> dict[str, Any]:
+    """
+    Endpoint unifié destiné à Home Assistant.
+
+    Lecture seule :
+    - aucune publication MQTT ;
+    - aucune écriture Modbus ;
+    - aucune commande de pompe ou de vanne ;
+    - aucun changement de mode ;
+    - aucun accès matériel forcé.
+    """
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    sections: dict[str, dict[str, Any]] = {
+        "system": _c021_safe_section(
+            "system",
+            lambda: controller.status(),
+        ),
+        "brain": _c021_safe_section(
+            "brain",
+            lambda: controller.brain_status(),
+        ),
+        "decision_engine": _c021_safe_section(
+            "decision_engine",
+            lambda: _c0213_build_decision(),
+        ),
+        "digital_twin": _c021_safe_section(
+            "digital_twin",
+            lambda: digital_twin.snapshot(refresh=False),
+        ),
+        "forecast": _c021_safe_section(
+            "forecast",
+            lambda: forecast_engine.forecast(),
+        ),
+        "scenarios": _c021_safe_section(
+            "scenarios",
+            lambda: forecast_engine.scenarios(),
+            default={},
+        ),
+        "thermal": _c021_safe_section(
+            "thermal",
+            lambda: controller.thermal_status(),
+        ),
+        "prediction": _c021_safe_section(
+            "prediction",
+            lambda: controller.prediction_status(),
+        ),
+        "hardware": _c021_safe_section(
+            "hardware",
+            lambda: controller.diagnostics(),
+        ),
+        "home_assistant": _c021_safe_section(
+            "home_assistant",
+            lambda: controller.home_assistant_status(),
+        ),
+        "operations": _c021_safe_section(
+            "operations",
+            lambda: operations_dashboard.snapshot(),
+        ),
+    }
+
+    alerts = _c021_extract_alerts(sections)
+
+    available_count = sum(
+        1 for section in sections.values()
+        if section.get("available", False)
+    )
+    total_count = len(sections)
+
+    digital_twin_data = sections["digital_twin"].get("data") or {}
+    system_data = sections["system"].get("data") or {}
+    brain_data = sections["brain"].get("data") or {}
+
+    return {
+        "generated_at": generated_at,
+        "version": "C021.1-BRAIN-DASHBOARD-1.0",
+        "read_only": True,
+        "hardware_touched": False,
+        "health": {
+            "status": (
+                "READY"
+                if available_count == total_count
+                else "DEGRADED"
+            ),
+            "available_components": available_count,
+            "total_components": total_count,
+            "availability_percent": round(
+                available_count * 100 / total_count,
+                1,
+            ),
+            "alert_count": len(alerts),
+        },
+        "summary": {
+            "system_status": (
+                system_data.get("status")
+                or system_data.get("mode")
+                or "UNKNOWN"
+            ),
+            "brain_status": (
+                brain_data.get("status")
+                or brain_data.get("decision")
+                or "UNKNOWN"
+            ),
+            "thermal_state": digital_twin_data.get("thermal_state"),
+            "digital_twin_status": digital_twin_data.get("status"),
+            "confidence_percent": digital_twin_data.get(
+                "confidence_percent"
+            ),
+            "data_quality_percent": digital_twin_data.get(
+                "data_quality_percent"
+            ),
+            "condensation_risk": digital_twin_data.get(
+                "condensation_risk"
+            ),
+            "condensation_margin_c": digital_twin_data.get(
+                "condensation_margin_c"
+            ),
+            "pump_running": digital_twin_data.get("pump_running"),
+            "valve_open": digital_twin_data.get("valve_open"),
+            "active_cooling": digital_twin_data.get("active_cooling"),
+        },
+        "sections": sections,
+        "alerts": alerts,
+    }
+
+
+
+
+# ============================================================================
+# C021.2 — UNIFIED HISTORIAN API
+# ============================================================================
+
+_C0212_HISTORIAN_VERSION = "C021.2-UNIFIED-HISTORIAN-1.0"
+
+
+def _c0212_safe_call(provider, default):
+    try:
+        value = provider()
+        return {
+            "available": True,
+            "data": default if value is None else value,
+            "error": None,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "data": default,
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+
+def _c0212_extract_items(value: Any) -> list[dict[str, Any]]:
+    """
+    Accepte les formes historiques déjà utilisées dans le projet :
+    - liste directe ;
+    - {"items": [...]}
+    - {"history": [...]}
+    - {"events": [...]}
+    - {"records": [...]}
+    """
+    if isinstance(value, list):
+        return [
+            item for item in value
+            if isinstance(item, dict)
+        ]
+
+    if not isinstance(value, dict):
+        return []
+
+    for key in ("items", "history", "events", "records", "samples"):
+        items = value.get(key)
+        if isinstance(items, list):
+            return [
+                item for item in items
+                if isinstance(item, dict)
+            ]
+
+    return []
+
+
+def _c0212_timestamp(record: dict[str, Any]) -> str | None:
+    for key in (
+        "timestamp",
+        "generated_at",
+        "measured_at",
+        "created_at",
+        "recorded_at",
+        "decided_at",
+        "observed_at",
+        "time",
+    ):
+        value = record.get(key)
+        if value is not None:
+            return str(value)
+
+    return None
+
+
+def _c0212_sort_records(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return sorted(
+        records,
+        key=lambda item: _c0212_timestamp(item) or "",
+        reverse=True,
+    )
+
+
+def _c0212_collect_history(limit: int) -> dict[str, Any]:
+    thermal_raw = _c0212_safe_call(
+        lambda: controller.thermal_history(limit),
+        [],
+    )
+
+    brain_raw = _c0212_safe_call(
+        lambda: controller.brain.decision_journal(limit),
+        [],
+    )
+
+    controller_raw = _c0212_safe_call(
+        lambda: controller.history(limit),
+        [],
+    )
+
+    thermal_items = _c0212_sort_records(
+        _c0212_extract_items(thermal_raw["data"])
+    )[:limit]
+
+    brain_items = _c0212_sort_records(
+        _c0212_extract_items(brain_raw["data"])
+    )[:limit]
+
+    controller_items = _c0212_sort_records(
+        _c0212_extract_items(controller_raw["data"])
+    )[:limit]
+
+    return {
+        "thermal": {
+            "available": thermal_raw["available"],
+            "count": len(thermal_items),
+            "items": thermal_items,
+            "error": thermal_raw["error"],
+        },
+        "brain": {
+            "available": brain_raw["available"],
+            "count": len(brain_items),
+            "items": brain_items,
+            "error": brain_raw["error"],
+        },
+        "controller": {
+            "available": controller_raw["available"],
+            "count": len(controller_items),
+            "items": controller_items,
+            "error": controller_raw["error"],
+        },
+    }
+
+
+def _c0212_latest_record(
+    records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not records:
+        return None
+
+    return _c0212_sort_records(records)[0]
+
+
+def _c0212_flatten_csv_value(value: Any) -> Any:
+    if value is None:
+        return ""
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+@router.get("/historian/status")
+def get_historian_status() -> dict[str, Any]:
+    history = _c0212_collect_history(limit=1)
+
+    available_sources = sum(
+        1
+        for source in history.values()
+        if source.get("available") is True
+    )
+
+    total_sources = len(history)
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "version": _C0212_HISTORIAN_VERSION,
+        "status": (
+            "READY"
+            if available_sources == total_sources
+            else "DEGRADED"
+        ),
+        "read_only": True,
+        "hardware_touched": False,
+        "available_sources": available_sources,
+        "total_sources": total_sources,
+        "sources": {
+            name: {
+                "available": data.get("available"),
+                "count": data.get("count"),
+                "error": data.get("error"),
+            }
+            for name, data in history.items()
+        },
+    }
+
+
+@router.get("/historian/latest")
+def get_historian_latest() -> dict[str, Any]:
+    history = _c0212_collect_history(limit=1)
+
+    digital_twin_result = _c0212_safe_call(
+        lambda: digital_twin.snapshot(refresh=False),
+        {},
+    )
+
+    thermal_status_result = _c0212_safe_call(
+        lambda: controller.thermal_status(),
+        {},
+    )
+
+    brain_status_result = _c0212_safe_call(
+        lambda: controller.brain_status(),
+        {},
+    )
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "version": _C0212_HISTORIAN_VERSION,
+        "read_only": True,
+        "hardware_touched": False,
+        "latest": {
+            "thermal": _c0212_latest_record(
+                history["thermal"]["items"]
+            ),
+            "brain": _c0212_latest_record(
+                history["brain"]["items"]
+            ),
+            "controller": _c0212_latest_record(
+                history["controller"]["items"]
+            ),
+            "digital_twin": digital_twin_result["data"],
+            "thermal_status": thermal_status_result["data"],
+            "brain_status": brain_status_result["data"],
+        },
+        "availability": {
+            "digital_twin": digital_twin_result["available"],
+            "thermal_status": thermal_status_result["available"],
+            "brain_status": brain_status_result["available"],
+        },
+    }
+
+
+@router.get("/historian/history")
+def get_historian_history(
+    limit: int = Query(default=200, ge=1, le=5000),
+    stream: str = Query(default="all"),
+) -> dict[str, Any]:
+    normalized_stream = stream.strip().lower()
+
+    allowed_streams = {
+        "all",
+        "thermal",
+        "brain",
+        "controller",
+    }
+
+    if normalized_stream not in allowed_streams:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "stream doit être l’une des valeurs suivantes : "
+                "all, thermal, brain, controller"
+            ),
+        )
+
+    history = _c0212_collect_history(limit=limit)
+
+    if normalized_stream == "all":
+        selected = history
+    else:
+        selected = {
+            normalized_stream: history[normalized_stream]
+        }
+
+    total_records = sum(
+        section.get("count", 0)
+        for section in selected.values()
+    )
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "version": _C0212_HISTORIAN_VERSION,
+        "read_only": True,
+        "hardware_touched": False,
+        "stream": normalized_stream,
+        "limit": limit,
+        "total_records": total_records,
+        "streams": selected,
+    }
+
+
+@router.get("/historian/export")
+def export_historian_csv(
+    limit: int = Query(default=1000, ge=1, le=5000),
+    stream: str = Query(default="thermal"),
+) -> Response:
+    normalized_stream = stream.strip().lower()
+
+    allowed_streams = {
+        "thermal",
+        "brain",
+        "controller",
+    }
+
+    if normalized_stream not in allowed_streams:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "stream doit être l’une des valeurs suivantes : "
+                "thermal, brain, controller"
+            ),
+        )
+
+    history = _c0212_collect_history(limit=limit)
+    records = history[normalized_stream]["items"]
+
+    field_names: list[str] = ["historian_stream"]
+
+    dynamic_fields = sorted(
+        {
+            str(key)
+            for record in records
+            for key in record.keys()
+        }
+    )
+
+    field_names.extend(
+        field
+        for field in dynamic_fields
+        if field != "historian_stream"
+    )
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=field_names,
+        extrasaction="ignore",
+    )
+
+    writer.writeheader()
+
+    for record in reversed(records):
+        row = {
+            "historian_stream": normalized_stream,
+        }
+
+        row.update(
+            {
+                str(key): _c0212_flatten_csv_value(value)
+                for key, value in record.items()
+            }
+        )
+
+        writer.writerow(row)
+
+    filename = (
+        f"geocooling-{normalized_stream}-"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.csv"
+    )
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"'
+            ),
+            "X-GeoCooling-Version": _C0212_HISTORIAN_VERSION,
+            "X-Hardware-Touched": "false",
+        },
+    )
+
+
+
+
+# ============================================================================
+# C021.3 — EXPLAINABLE DECISION ENGINE
+# ============================================================================
+
+_C0213_DECISION_ENGINE_VERSION = "C021.3-DECISION-ENGINE-1.0"
+
+
+def _c0213_find_value(
+    value: Any,
+    keys: tuple[str, ...],
+) -> Any:
+    """
+    Recherche récursivement la première valeur correspondant à l’une
+    des clés demandées dans une structure JSON.
+    """
+    if isinstance(value, dict):
+        for key in keys:
+            if key in value and value[key] is not None:
+                return value[key]
+
+        for child in value.values():
+            found = _c0213_find_value(child, keys)
+            if found is not None:
+                return found
+
+    elif isinstance(value, list):
+        for child in value:
+            found = _c0213_find_value(child, keys)
+            if found is not None:
+                return found
+
+    return None
+
+
+def _c0213_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if result != result:
+        return None
+
+    return result
+
+
+def _c0213_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+
+        if normalized in {"true", "on", "yes", "1", "running", "open"}:
+            return True
+
+        if normalized in {"false", "off", "no", "0", "stopped", "closed"}:
+            return False
+
+    return None
+
+
+def _c0213_build_decision() -> dict[str, Any]:
+    brain_result = _c0212_safe_call(
+        lambda: controller.brain_status(),
+        {},
+    )
+
+    forecast_result = _c0212_safe_call(
+        lambda: forecast_engine.forecast(),
+        {},
+    )
+
+    twin_result = _c0212_safe_call(
+        lambda: digital_twin.snapshot(refresh=False),
+        {},
+    )
+
+    prediction_result = _c0212_safe_call(
+        lambda: controller.prediction_status(),
+        {},
+    )
+
+    system_result = _c0212_safe_call(
+        lambda: controller.status(),
+        {},
+    )
+
+    brain = brain_result["data"] or {}
+    forecast = forecast_result["data"] or {}
+    twin = twin_result["data"] or {}
+    prediction = prediction_result["data"] or {}
+    system = system_result["data"] or {}
+
+    existing_decision = _c0213_find_value(
+        brain,
+        (
+            "decision",
+            "action",
+            "recommended_action",
+            "command",
+            "state",
+        ),
+    )
+
+    existing_reason = _c0213_find_value(
+        brain,
+        (
+            "reason",
+            "explanation",
+            "rationale",
+            "decision_reason",
+        ),
+    )
+
+    existing_confidence = _c0213_float(
+        _c0213_find_value(
+            brain,
+            (
+                "confidence_percent",
+                "confidence",
+                "score",
+                "decision_confidence",
+            ),
+        )
+    )
+
+    indoor_temperature = _c0213_float(
+        twin.get("indoor_air_temperature_c")
+    )
+
+    outdoor_temperature = _c0213_float(
+        twin.get("outdoor_air_temperature_c")
+    )
+
+    floor_surface_temperature = _c0213_float(
+        twin.get("floor_surface_temperature_c")
+    )
+
+    supply_temperature = _c0213_float(
+        twin.get("supply_temperature_c")
+    )
+
+    return_temperature = _c0213_float(
+        twin.get("return_temperature_c")
+    )
+
+    flow_l_min = _c0213_float(
+        twin.get("flow_l_min")
+    )
+
+    condensation_margin = _c0213_float(
+        twin.get("condensation_margin_c")
+    )
+
+    condensation_risk = (
+        twin.get("condensation_risk")
+        or "UNKNOWN"
+    )
+
+    cold_storage = _c0213_float(
+        twin.get("cold_storage_percent")
+    )
+
+    pump_running = _c0213_bool(
+        twin.get("pump_running")
+    )
+
+    valve_open = _c0213_bool(
+        twin.get("valve_open")
+    )
+
+    active_cooling = _c0213_bool(
+        twin.get("active_cooling")
+    )
+
+    predicted_outdoor_max = _c0213_float(
+        _c0213_find_value(
+            forecast,
+            (
+                "maximum_temperature_c",
+                "max_temperature_c",
+                "temperature_max_c",
+                "outdoor_max_c",
+                "daily_high_c",
+                "forecast_max_c",
+            ),
+        )
+    )
+
+    predicted_indoor = _c0213_float(
+        _c0213_find_value(
+            prediction,
+            (
+                "predicted_indoor_temperature_c",
+                "indoor_temperature_prediction_c",
+                "predicted_temperature_c",
+                "forecast_indoor_c",
+            ),
+        )
+    )
+
+    start_at = _c0213_find_value(
+        brain,
+        (
+            "start_at",
+            "start_time",
+            "optimal_start_at",
+            "recommended_start_at",
+        ),
+    )
+
+    stop_at = _c0213_find_value(
+        brain,
+        (
+            "stop_at",
+            "stop_time",
+            "optimal_stop_at",
+            "recommended_stop_at",
+        ),
+    )
+
+    reasons: list[str] = []
+    blockers: list[str] = []
+    recommendations: list[str] = []
+    conditions_to_start: list[str] = []
+    conditions_to_stop: list[str] = []
+
+    if existing_reason:
+        if isinstance(existing_reason, list):
+            reasons.extend(str(item) for item in existing_reason)
+        else:
+            reasons.append(str(existing_reason))
+
+    if indoor_temperature is not None:
+        reasons.append(
+            f"Température intérieure mesurée : "
+            f"{indoor_temperature:.1f} °C"
+        )
+
+    if outdoor_temperature is not None:
+        reasons.append(
+            f"Température extérieure mesurée : "
+            f"{outdoor_temperature:.1f} °C"
+        )
+
+    if predicted_outdoor_max is not None:
+        reasons.append(
+            f"Température extérieure maximale prévue : "
+            f"{predicted_outdoor_max:.1f} °C"
+        )
+
+    if predicted_indoor is not None:
+        reasons.append(
+            f"Température intérieure prédite : "
+            f"{predicted_indoor:.1f} °C"
+        )
+
+    if cold_storage is not None:
+        reasons.append(
+            f"Stockage de froid estimé : "
+            f"{cold_storage:.1f} %"
+        )
+
+    if condensation_margin is not None:
+        reasons.append(
+            f"Marge avant condensation : "
+            f"{condensation_margin:.2f} °C"
+        )
+
+    if condensation_risk in {"HIGH", "CRITICAL"}:
+        blockers.append(
+            "Risque de condensation incompatible avec "
+            "un refroidissement normal."
+        )
+
+    if condensation_margin is not None and condensation_margin < 3.0:
+        blockers.append(
+            "Marge de condensation inférieure à 3 °C."
+        )
+
+    if pump_running is True and valve_open is False:
+        blockers.append(
+            "Pompe active alors que la vanne est fermée."
+        )
+
+    if (
+        pump_running is True
+        and flow_l_min is not None
+        and flow_l_min <= 0
+    ):
+        blockers.append(
+            "Pompe active sans débit hydraulique mesuré."
+        )
+
+    conditions_to_start.extend(
+        [
+            "Sécurité thermique autorisée.",
+            "Marge de condensation suffisante.",
+            "Vanne disponible et circuit hydraulique cohérent.",
+            "Demande de refroidissement confirmée par le Brain.",
+        ]
+    )
+
+    conditions_to_stop.extend(
+        [
+            "Température intérieure revenue sous la consigne d’arrêt.",
+            "Stockage de froid suffisant.",
+            "Marge de condensation devenue insuffisante.",
+            "Anomalie hydraulique ou matérielle détectée.",
+        ]
+    )
+
+    normalized_existing = (
+        str(existing_decision).strip().upper()
+        if existing_decision is not None
+        else ""
+    )
+
+    if blockers:
+        decision = "BLOCK_COOLING"
+        decision_class = "SAFETY"
+        recommendations.append(
+            "Maintenir pompe et vanne arrêtées jusqu’à disparition "
+            "des blocages."
+        )
+
+    elif active_cooling is True:
+        decision = "CONTINUE_COOLING"
+        decision_class = "ACTIVE"
+        recommendations.append(
+            "Poursuivre le refroidissement sous surveillance "
+            "de la marge de condensation."
+        )
+
+    elif normalized_existing in {
+        "START",
+        "START_COOLING",
+        "COOL",
+        "COOLING",
+        "ON",
+    }:
+        decision = "START_COOLING"
+        decision_class = "ACTION"
+        recommendations.append(
+            "Le Brain recommande le démarrage du refroidissement."
+        )
+
+    elif normalized_existing in {
+        "STOP",
+        "STOP_COOLING",
+        "OFF",
+    }:
+        decision = "STOP_COOLING"
+        decision_class = "ACTION"
+        recommendations.append(
+            "Le Brain recommande l’arrêt du refroidissement."
+        )
+
+    elif (
+        indoor_temperature is not None
+        and indoor_temperature >= 25.0
+        and (
+            predicted_outdoor_max is None
+            or predicted_outdoor_max >= 28.0
+        )
+    ):
+        decision = "PREPARE_COOLING"
+        decision_class = "ANTICIPATION"
+        recommendations.append(
+            "Préparer une séquence de refroidissement anticipée."
+        )
+
+    elif cold_storage is not None and cold_storage >= 70.0:
+        decision = "HOLD_COLD_STORAGE"
+        decision_class = "STANDBY"
+        recommendations.append(
+            "Le stockage de froid est suffisant ; maintenir la veille."
+        )
+
+    else:
+        decision = "STANDBY"
+        decision_class = "STANDBY"
+        recommendations.append(
+            "Aucune action thermique immédiate n’est nécessaire."
+        )
+
+    source_quality = sum(
+        1
+        for result in (
+            brain_result,
+            forecast_result,
+            twin_result,
+            prediction_result,
+            system_result,
+        )
+        if result["available"]
+    )
+
+    calculated_confidence = round(
+        min(
+            100.0,
+            source_quality * 14.0
+            + (
+                _c0213_float(twin.get("data_quality_percent"))
+                or 0.0
+            ) * 0.2
+            + (
+                _c0213_float(twin.get("confidence_percent"))
+                or 0.0
+            ) * 0.1,
+        ),
+        1,
+    )
+
+    confidence = (
+        existing_confidence
+        if existing_confidence is not None
+        else calculated_confidence
+    )
+
+    if confidence <= 1:
+        confidence *= 100
+
+    confidence = round(
+        max(0.0, min(100.0, confidence)),
+        1,
+    )
+
+    if blockers:
+        confidence = max(confidence, 90.0)
+
+    warnings: list[dict[str, Any]] = []
+
+    for name, result in (
+        ("brain", brain_result),
+        ("forecast", forecast_result),
+        ("digital_twin", twin_result),
+        ("prediction", prediction_result),
+        ("system", system_result),
+    ):
+        if not result["available"]:
+            warnings.append(
+                {
+                    "component": name,
+                    "message": (
+                        result.get("error", {}).get("message")
+                        or "Composant indisponible"
+                    ),
+                }
+            )
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "version": _C0213_DECISION_ENGINE_VERSION,
+        "status": (
+            "READY"
+            if not warnings
+            else "DEGRADED"
+        ),
+        "read_only": True,
+        "hardware_touched": False,
+        "decision": {
+            "code": decision,
+            "class": decision_class,
+            "confidence_percent": confidence,
+            "source_decision": existing_decision,
+            "action_required": decision not in {
+                "STANDBY",
+                "HOLD_COLD_STORAGE",
+            },
+        },
+        "explanation": {
+            "summary": recommendations[0],
+            "reasons": reasons,
+            "blockers": blockers,
+            "recommendations": recommendations,
+        },
+        "conditions": {
+            "start": conditions_to_start,
+            "stop": conditions_to_stop,
+        },
+        "optimal_window": {
+            "start_at": start_at,
+            "stop_at": stop_at,
+            "available": bool(start_at or stop_at),
+        },
+        "thermal_context": {
+            "indoor_temperature_c": indoor_temperature,
+            "outdoor_temperature_c": outdoor_temperature,
+            "predicted_outdoor_max_c": predicted_outdoor_max,
+            "predicted_indoor_temperature_c": predicted_indoor,
+            "floor_surface_temperature_c": floor_surface_temperature,
+            "supply_temperature_c": supply_temperature,
+            "return_temperature_c": return_temperature,
+            "flow_l_min": flow_l_min,
+            "cold_storage_percent": cold_storage,
+            "condensation_margin_c": condensation_margin,
+            "condensation_risk": condensation_risk,
+            "pump_running": pump_running,
+            "valve_open": valve_open,
+            "active_cooling": active_cooling,
+        },
+        "home_assistant": {
+            "state": decision,
+            "icon": (
+                "mdi:snowflake-alert"
+                if blockers
+                else (
+                    "mdi:snowflake"
+                    if decision in {
+                        "START_COOLING",
+                        "CONTINUE_COOLING",
+                        "PREPARE_COOLING",
+                    }
+                    else "mdi:power-sleep"
+                )
+            ),
+            "message": recommendations[0],
+            "severity": (
+                "critical"
+                if blockers
+                else (
+                    "warning"
+                    if decision == "PREPARE_COOLING"
+                    else "normal"
+                )
+            ),
+        },
+        "source_availability": {
+            "brain": brain_result["available"],
+            "forecast": forecast_result["available"],
+            "digital_twin": twin_result["available"],
+            "prediction": prediction_result["available"],
+            "system": system_result["available"],
+        },
+        "warnings": warnings,
+    }
+
+
+@router.get("/brain/decision-engine")
+def get_brain_decision_engine() -> dict[str, Any]:
+    """
+    Synthèse explicable en lecture seule.
+
+    Cette route ne transmet aucune commande au contrôleur.
+    """
+    return _c0213_build_decision()
+
+
+
+
+# ============================================================================
+# C021.4 — HOME ASSISTANT UNIFIED VIEW
+# ============================================================================
+
+_C0214_HOME_ASSISTANT_VERSION = "C021.4-HOME-ASSISTANT-VIEW-1.0"
+
+
+def _c0214_state(value: Any, default: str = "unknown") -> str:
+    if value is None:
+        return default
+
+    if isinstance(value, bool):
+        return "on" if value else "off"
+
+    return str(value)
+
+
+def _c0214_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if number != number:
+        return None
+
+    return round(number, 2)
+
+
+def _c0214_sensor(
+    state: Any,
+    *,
+    name: str,
+    unit: str | None = None,
+    icon: str | None = None,
+    device_class: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "name": name,
+        "state": state,
+        "attributes": attributes or {},
+    }
+
+    if unit is not None:
+        payload["unit_of_measurement"] = unit
+
+    if icon is not None:
+        payload["icon"] = icon
+
+    if device_class is not None:
+        payload["device_class"] = device_class
+
+    return payload
+
+
+def _c0214_build_home_assistant_view() -> dict[str, Any]:
+    decision_result = _c0212_safe_call(
+        lambda: _c0213_build_decision(),
+        {},
+    )
+
+    twin_result = _c0212_safe_call(
+        lambda: digital_twin.snapshot(refresh=False),
+        {},
+    )
+
+    historian_result = _c0212_safe_call(
+        lambda: _c0212_collect_history(limit=1),
+        {},
+    )
+
+    decision_payload = decision_result["data"] or {}
+    decision = decision_payload.get("decision") or {}
+    explanation = decision_payload.get("explanation") or {}
+    thermal = decision_payload.get("thermal_context") or {}
+    ha_decision = decision_payload.get("home_assistant") or {}
+
+    twin = twin_result["data"] or {}
+
+    indoor_temperature = _c0214_number(
+        thermal.get("indoor_temperature_c")
+        if thermal.get("indoor_temperature_c") is not None
+        else twin.get("indoor_air_temperature_c")
+    )
+
+    outdoor_temperature = _c0214_number(
+        thermal.get("outdoor_temperature_c")
+        if thermal.get("outdoor_temperature_c") is not None
+        else twin.get("outdoor_air_temperature_c")
+    )
+
+    floor_surface_temperature = _c0214_number(
+        thermal.get("floor_surface_temperature_c")
+        if thermal.get("floor_surface_temperature_c") is not None
+        else twin.get("floor_surface_temperature_c")
+    )
+
+    supply_temperature = _c0214_number(
+        thermal.get("supply_temperature_c")
+        if thermal.get("supply_temperature_c") is not None
+        else twin.get("supply_temperature_c")
+    )
+
+    return_temperature = _c0214_number(
+        thermal.get("return_temperature_c")
+        if thermal.get("return_temperature_c") is not None
+        else twin.get("return_temperature_c")
+    )
+
+    flow_l_min = _c0214_number(
+        thermal.get("flow_l_min")
+        if thermal.get("flow_l_min") is not None
+        else twin.get("flow_l_min")
+    )
+
+    condensation_margin = _c0214_number(
+        thermal.get("condensation_margin_c")
+        if thermal.get("condensation_margin_c") is not None
+        else twin.get("condensation_margin_c")
+    )
+
+    confidence = _c0214_number(
+        decision.get("confidence_percent")
+    )
+
+    cold_storage = _c0214_number(
+        thermal.get("cold_storage_percent")
+    )
+
+    decision_code = _c0214_state(
+        decision.get("code"),
+        "UNKNOWN",
+    )
+
+    decision_class = _c0214_state(
+        decision.get("class"),
+        "UNKNOWN",
+    )
+
+    summary = _c0214_state(
+        explanation.get("summary"),
+        "Aucune recommandation disponible",
+    )
+
+    blockers = explanation.get("blockers") or []
+    warnings = decision_payload.get("warnings") or []
+
+    pump_running = bool(
+        thermal.get("pump_running")
+    )
+
+    valve_open = bool(
+        thermal.get("valve_open")
+    )
+
+    active_cooling = bool(
+        thermal.get("active_cooling")
+    )
+
+    condensation_risk = _c0214_state(
+        thermal.get("condensation_risk"),
+        "UNKNOWN",
+    )
+
+    available_components = sum(
+        1
+        for result in (
+            decision_result,
+            twin_result,
+            historian_result,
+        )
+        if result["available"]
+    )
+
+    total_components = 3
+
+    system_available = (
+        decision_result["available"]
+        and twin_result["available"]
+    )
+
+    safety_ok = len(blockers) == 0
+
+    sensors = {
+        "system_status": _c0214_sensor(
+            "READY" if system_available else "DEGRADED",
+            name="GeoCooling état système",
+            icon="mdi:server",
+            attributes={
+                "available_components": available_components,
+                "total_components": total_components,
+                "version": _C0214_HOME_ASSISTANT_VERSION,
+            },
+        ),
+        "brain_decision": _c0214_sensor(
+            decision_code,
+            name="GeoCooling décision Brain",
+            icon=ha_decision.get("icon") or "mdi:brain",
+            attributes={
+                "class": decision_class,
+                "confidence_percent": confidence,
+                "message": summary,
+                "severity": ha_decision.get("severity"),
+                "action_required": decision.get("action_required"),
+            },
+        ),
+        "brain_confidence": _c0214_sensor(
+            confidence,
+            name="GeoCooling confiance Brain",
+            unit="%",
+            icon="mdi:gauge",
+        ),
+        "brain_message": _c0214_sensor(
+            summary,
+            name="GeoCooling recommandation",
+            icon="mdi:message-text",
+            attributes={
+                "reasons": explanation.get("reasons") or [],
+                "recommendations": (
+                    explanation.get("recommendations") or []
+                ),
+            },
+        ),
+        "indoor_temperature": _c0214_sensor(
+            indoor_temperature,
+            name="GeoCooling température intérieure",
+            unit="°C",
+            device_class="temperature",
+            icon="mdi:home-thermometer",
+        ),
+        "outdoor_temperature": _c0214_sensor(
+            outdoor_temperature,
+            name="GeoCooling température extérieure",
+            unit="°C",
+            device_class="temperature",
+            icon="mdi:thermometer",
+        ),
+        "floor_surface_temperature": _c0214_sensor(
+            floor_surface_temperature,
+            name="GeoCooling température de surface",
+            unit="°C",
+            device_class="temperature",
+            icon="mdi:heat-wave",
+        ),
+        "supply_temperature": _c0214_sensor(
+            supply_temperature,
+            name="GeoCooling température départ",
+            unit="°C",
+            device_class="temperature",
+            icon="mdi:coolant-temperature",
+        ),
+        "return_temperature": _c0214_sensor(
+            return_temperature,
+            name="GeoCooling température retour",
+            unit="°C",
+            device_class="temperature",
+            icon="mdi:coolant-temperature",
+        ),
+        "flow_rate": _c0214_sensor(
+            flow_l_min,
+            name="GeoCooling débit hydraulique",
+            unit="L/min",
+            icon="mdi:waves-arrow-right",
+        ),
+        "condensation_margin": _c0214_sensor(
+            condensation_margin,
+            name="GeoCooling marge condensation",
+            unit="°C",
+            device_class="temperature",
+            icon="mdi:water-alert",
+            attributes={
+                "risk": condensation_risk,
+            },
+        ),
+        "cold_storage": _c0214_sensor(
+            cold_storage,
+            name="GeoCooling stockage de froid",
+            unit="%",
+            icon="mdi:snowflake-thermometer",
+        ),
+    }
+
+    binary_sensors = {
+        "available": _c0214_sensor(
+            "on" if system_available else "off",
+            name="GeoCooling disponible",
+            device_class="connectivity",
+            icon="mdi:lan-connect",
+        ),
+        "safety": _c0214_sensor(
+            "on" if safety_ok else "off",
+            name="GeoCooling sécurité",
+            device_class="safety",
+            icon=(
+                "mdi:shield-check"
+                if safety_ok
+                else "mdi:shield-alert"
+            ),
+            attributes={
+                "blocker_count": len(blockers),
+                "blockers": blockers,
+            },
+        ),
+        "pump": _c0214_sensor(
+            "on" if pump_running else "off",
+            name="GeoCooling pompe",
+            device_class="running",
+            icon="mdi:pump",
+        ),
+        "valve": _c0214_sensor(
+            "on" if valve_open else "off",
+            name="GeoCooling vanne",
+            device_class="opening",
+            icon="mdi:valve",
+        ),
+        "active_cooling": _c0214_sensor(
+            "on" if active_cooling else "off",
+            name="GeoCooling refroidissement actif",
+            device_class="running",
+            icon="mdi:snowflake",
+        ),
+        "action_required": _c0214_sensor(
+            (
+                "on"
+                if bool(decision.get("action_required"))
+                else "off"
+            ),
+            name="GeoCooling action requise",
+            device_class="problem",
+            icon="mdi:alert-circle",
+        ),
+        "condensation_risk": _c0214_sensor(
+            (
+                "on"
+                if condensation_risk in {"HIGH", "CRITICAL"}
+                else "off"
+            ),
+            name="GeoCooling risque condensation",
+            device_class="problem",
+            icon="mdi:water-alert",
+            attributes={
+                "risk_level": condensation_risk,
+                "margin_c": condensation_margin,
+            },
+        ),
+    }
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "version": _C0214_HOME_ASSISTANT_VERSION,
+        "status": "READY" if system_available else "DEGRADED",
+        "read_only": True,
+        "hardware_touched": False,
+        "entity_prefix": "geocooling",
+        "refresh_recommendation_seconds": 30,
+        "sensors": sensors,
+        "binary_sensors": binary_sensors,
+        "summary": {
+            "decision": decision_code,
+            "confidence_percent": confidence,
+            "message": summary,
+            "safety_ok": safety_ok,
+            "blocker_count": len(blockers),
+            "warning_count": len(warnings),
+            "pump_running": pump_running,
+            "valve_open": valve_open,
+            "active_cooling": active_cooling,
+        },
+        "availability": {
+            "decision_engine": decision_result["available"],
+            "digital_twin": twin_result["available"],
+            "historian": historian_result["available"],
+        },
+    }
+
+
+@router.get("/home-assistant/dashboard")
+def get_home_assistant_dashboard() -> dict[str, Any]:
+    """
+    Vue stable et simplifiée destinée à Home Assistant.
+
+    Cette route ne transmet aucune commande matérielle.
+    """
+    return _c0214_build_home_assistant_view()
 
 
 

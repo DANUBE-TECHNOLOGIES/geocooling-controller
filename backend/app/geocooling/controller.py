@@ -599,7 +599,16 @@ class GeoCoolingController:
                 connection.execute(text(statement))
 
     def _restore_safe_state(self) -> None:
-        self.driver.force_safe_state()
+        # C020.1R5R8 DEGRADED STARTUP
+        try:
+            self.driver.force_safe_state()
+        except Exception as exc:
+            self._hardware_startup_degraded = True
+            self._hardware_startup_fault = str(exc)
+            logging.getLogger("sbc.geocooling").critical(
+                "Démarrage en mode dégradé : état matériel non confirmé (%s).",
+                exc,
+            )
         self.state = GeoCoolingState.OFF
         self.state_changed_at = utc_now()
         self.started_at = None
