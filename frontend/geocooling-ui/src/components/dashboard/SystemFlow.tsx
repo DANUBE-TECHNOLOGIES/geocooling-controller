@@ -1,9 +1,13 @@
 import type { GeoCoolingSnapshot } from "@/types/geocooling";
 
+function temperature(value: number | null): string {
+  return value === null ? "—" : `${value}°C`;
+}
+
 export function SystemFlow({ snapshot }: { snapshot: GeoCoolingSnapshot }) {
   const nodes = [
-    ["💧", "Nappe", `${snapshot.sourceInTemperature}°C`],
-    ["▧", "Échangeur", `${snapshot.sourceOutTemperature}°C`],
+    ["💧", "Nappe", temperature(snapshot.sourceInTemperature)],
+    ["▧", "Échangeur", temperature(snapshot.sourceOutTemperature)],
     ["◉", "Pompe", snapshot.pumpRunning ? "ON" : "OFF"],
   ];
 

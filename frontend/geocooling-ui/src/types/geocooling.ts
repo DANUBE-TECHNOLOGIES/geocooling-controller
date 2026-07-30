@@ -4,15 +4,23 @@ export type BrainDecision = {
   reasons: string[];
 };
 
+export type GeoCoolingMode = "simulation" | "automatic" | "manual" | "unknown";
+
 export type GeoCoolingSnapshot = {
-  indoorTemperature: number;
-  humidity: number;
-  sourceInTemperature: number;
-  sourceOutTemperature: number;
-  supplyTemperature: number;
-  returnTemperature: number;
+  available: boolean;
+  generatedAt: string | null;
+  indoorTemperature: number | null;
+  humidity: number | null;
+  sourceInTemperature: number | null;
+  sourceOutTemperature: number | null;
+  supplyTemperature: number | null;
+  returnTemperature: number | null;
   pumpRunning: boolean;
   valveOpen: boolean;
-  mode: "simulation" | "automatic" | "manual";
+  mode: GeoCoolingMode;
+  safetySafe: boolean | null;
+  deviceReady: boolean | null;
   decision: BrainDecision;
 };
+
+export type GeoCoolingApiPayload = Record<string, unknown>;

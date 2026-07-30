@@ -1,18 +1,36 @@
 import type { GeoCoolingSnapshot } from "@/types/geocooling";
 
-export async function fetchGeoCoolingSnapshot(): Promise<GeoCoolingSnapshot> {
-  const baseUrl = process.env.GEOCOOLING_API_URL;
-  if (!baseUrl) {
-    throw new Error("GEOCOOLING_API_URL n’est pas configurée");
+const API = process.env.GEOCOOLING_API_URL;
+
+async function request<T>(
+  endpoint: string,
+  signal?: AbortSignal
+): Promise<T> {
+
+  if (!API) {
+    throw new Error("GEOCOOLING_API_URL n'est pas configurée");
   }
 
-  const response = await fetch(`${baseUrl}/geocooling/home-assistant`, {
+  const response = await fetch(`${API}${endpoint}`, {
     cache: "no-store",
+    signal,
+    headers: {
+      Accept: "application/json",
+    },
   });
 
   if (!response.ok) {
-    throw new Error(`API GeoCooling indisponible (${response.status})`);
+    throw new Error(await response.text());
   }
 
-  return response.json() as Promise<GeoCoolingSnapshot>;
+  return response.json() as Promise<T>;
+}
+
+export function fetchGeoCoolingSnapshot(
+  signal?: AbortSignal
+): Promise<GeoCoolingSnapshot> {
+  return request(
+    "/geocooling/home-assistant",
+    signal
+  );
 }
