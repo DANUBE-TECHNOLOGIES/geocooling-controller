@@ -20,10 +20,8 @@ export function OverviewGrid({
       : "--";
 
   return (
-    <section
-      className="overview-grid"
-      aria-label="Tableau de bord"
-    >
+    <section className="overview-grid">
+
       <MetricCard
         icon="🏠"
         label="Maison"
@@ -47,8 +45,8 @@ export function OverviewGrid({
         label="Source"
         value={format(snapshot.sourceInTemperature)}
         unit="°C"
-        foot="Nappe"
-        trend="Géothermie"
+        foot="Nappe géothermique"
+        trend="Source"
       />
 
       <MetricCard
@@ -56,7 +54,7 @@ export function OverviewGrid({
         label="Départ"
         value={format(snapshot.supplyTemperature)}
         unit="°C"
-        foot="Plancher"
+        foot="Circuit plancher"
         trend="Hydraulique"
       />
 
@@ -65,7 +63,7 @@ export function OverviewGrid({
         label="ΔT"
         value={delta}
         unit="°C"
-        foot="Retour / Départ"
+        foot="Retour - Départ"
         trend="Performance"
         state="warning"
       />
@@ -76,15 +74,15 @@ export function OverviewGrid({
         value={snapshot.pumpRunning ? "ACTIVE" : "STOP"}
         foot={
           snapshot.pumpRunning
-            ? "Circulation"
+            ? "Circulation active"
             : "Arrêt"
         }
+        trend="Hydraulique"
         state={
           snapshot.pumpRunning
             ? "on"
             : "off"
         }
-        trend="Hydraulique"
       />
 
       <MetricCard
@@ -95,23 +93,24 @@ export function OverviewGrid({
             ? "OUVERTE"
             : "FERMÉE"
         }
-        foot="Circuit"
+        foot="Circuit primaire"
+        trend="Commande"
         state={
           snapshot.valveOpen
             ? "on"
             : "off"
         }
-        trend="Commande"
       />
 
       <MetricCard
         icon="🧠"
         label="Brain"
-        value={snapshot.decision}
-        foot="Décision IA"
-        trend={snapshot.mode}
+        value={snapshot.decision.summary}
+        foot={snapshot.decision.reasons.join(" • ")}
+        trend={`${Math.round(snapshot.decision.confidence)} %`}
         state="warning"
       />
+
     </section>
   );
 }
