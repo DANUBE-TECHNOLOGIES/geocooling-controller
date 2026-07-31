@@ -1,0 +1,19 @@
+diff --git a/src/components/dashboard/SystemFlow.tsx b/src/components/dashboard/SystemFlow.tsx
+index 0000000..1111111 100644
+--- a/src/components/dashboard/SystemFlow.tsx
++++ b/src/components/dashboard/SystemFlow.tsx
+@@
+-      <div className="hydraulic-flow">
++      <div className="hydraulic-flow scada-flow">
+@@
+-        <div className="equipment">
++        <div className="equipment equipment-source">
+@@
+-        <div className="equipment">
++        <div className="equipment equipment-exchanger">
+@@
+-        <div className="equipment">
++        <div className="equipment equipment-pump">
+@@
+-        <div className="equipment">
++        <div className="equipment equipment-floor">
