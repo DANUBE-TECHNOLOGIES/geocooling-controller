@@ -7,7 +7,8 @@ import { AppShell } from "@/components/layout/AppShell";
 import { useGeoCooling } from "@/hooks/useGeoCooling";
 
 function formatUpdate(date: Date | null): string {
-  if (!date) return "En attente";
+  if (!date) return "--:--:--";
+
   return date.toLocaleTimeString("fr-FR", {
     hour: "2-digit",
     minute: "2-digit",
@@ -16,60 +17,138 @@ function formatUpdate(date: Date | null): string {
 }
 
 export default function Home() {
-  const { snapshot, loading, refreshing, error, lastUpdate, refresh } = useGeoCooling();
+
+  const {
+    snapshot,
+    loading,
+    refreshing,
+    error,
+    lastUpdate,
+    refresh,
+  } = useGeoCooling();
+
   const connected = Boolean(snapshot && !error);
 
   return (
-    <AppShell connected={connected} mode={snapshot?.mode}>
-      <section className="page-heading">
+    <AppShell
+      connected={connected}
+      mode={snapshot?.mode}
+    >
+
+      <section className="dashboard-header">
+
         <div>
-          <p className="eyebrow">Vue d’ensemble</p>
-          <h1>Supervision GeoCooling</h1>
-          <p className="page-copy">
-            État thermique, hydraulique et décisionnel de l’installation.
-          </p>
+
+          <div className="dashboard-tag">
+            SUPERVISION TEMPS RÉEL
+          </div>
+
+          <h1 className="dashboard-title">
+            GeoCooling Enterprise
+          </h1>
+
+          <div className="dashboard-subtitle">
+            Pilotage intelligent du bâtiment
+          </div>
+
         </div>
-        <button
-          className={`live-pill live-button ${error ? "live-error" : ""}`}
-          type="button"
-          onClick={() => void refresh(false)}
-          disabled={refreshing}
-          title="Actualiser maintenant"
-        >
-          <span className="live-dot" />
-          {refreshing ? "Actualisation…" : `Dernière mise à jour : ${formatUpdate(lastUpdate)}`}
-        </button>
+
+        <div className="dashboard-actions">
+
+          <button
+            className="live-pill live-button"
+            onClick={() => void refresh(false)}
+            disabled={refreshing}
+          >
+
+            {refreshing
+              ? "Synchronisation..."
+              : `Dernière MAJ : ${formatUpdate(lastUpdate)}`}
+
+          </button>
+
+        </div>
+
       </section>
 
-      {loading && !snapshot ? (
-        <section className="state-panel" aria-live="polite">
+      {loading && !snapshot && (
+
+        <section className="state-panel">
+
           <div className="state-spinner" />
-          <div>
-            <h2>Connexion au contrôleur…</h2>
-            <p>Lecture des données temps réel GeoCooling.</p>
-          </div>
-        </section>
-      ) : null}
 
-      {error ? (
-        <section className="state-panel state-error" role="alert">
           <div>
-            <h2>Backend GeoCooling indisponible</h2>
-            <p>{error}</p>
-          </div>
-          <button type="button" onClick={() => void refresh(false)}>Réessayer</button>
-        </section>
-      ) : null}
 
-      {snapshot ? (
+            <h2>
+              Connexion au contrôleur...
+            </h2>
+
+            <p>
+              Chargement des données GeoCooling.
+            </p>
+
+          </div>
+
+        </section>
+
+      )}
+
+      {error && (
+
+        <section
+          className="state-panel state-error"
+        >
+
+          <div>
+
+            <h2>
+              Backend indisponible
+            </h2>
+
+            <p>
+              {error}
+            </p>
+
+          </div>
+
+          <button
+            onClick={() => void refresh(false)}
+          >
+            Réessayer
+          </button>
+
+        </section>
+
+      )}
+
+      {snapshot && (
+
         <>
-          <OverviewGrid snapshot={snapshot} />
-          <section className="dashboard-columns">
-            <DecisionPanel decision={snapshot.decision} />
-            <SystemFlow snapshot={snapshot} />
+
+          <OverviewGrid
+            snapshot={snapshot}
+          />
+
+          <section
+            className="enterprise-grid"
+          >
+
+            <DecisionPanel
+              decision={snapshot.decision}
+            />
+
+            <SystemFlow
+              snapshot={snapshot}
+            />
+
           </section>
+
         </>
-      ) : null}
+
+      )}
+
     </AppShell>
+
   );
+
 }
