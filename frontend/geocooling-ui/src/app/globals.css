@@ -1282,3 +1282,215 @@ opacity:1;
   }
 }
 
+
+/* ===========================================================
+   E8.1 - MODE SIMULATION LOCAL
+   =========================================================== */
+
+.simulation-panel {
+  min-width: 0;
+}
+
+.simulation-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(7, 16, 25, 0.72);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.simulation-toggle:hover {
+  border-color: rgba(66, 211, 181, 0.45);
+}
+
+.simulation-toggle-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #647888;
+}
+
+.simulation-toggle-active {
+  color: var(--gc-green);
+  border-color: rgba(29, 215, 91, 0.35);
+  background: rgba(29, 215, 91, 0.08);
+}
+
+.simulation-toggle-active .simulation-toggle-dot {
+  background: var(--gc-green);
+  box-shadow:
+    0 0 0 4px rgba(29, 215, 91, 0.1),
+    0 0 14px rgba(29, 215, 91, 0.7);
+}
+
+.simulation-warning {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(61, 165, 255, 0.18);
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(61, 165, 255, 0.05);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.simulation-warning strong {
+  color: #bfe4ff;
+}
+
+.simulation-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+  transition: opacity 180ms ease;
+}
+
+.simulation-controls-disabled {
+  opacity: 0.45;
+}
+
+.simulation-control {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(7, 16, 25, 0.42);
+}
+
+.simulation-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.simulation-control-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.simulation-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--gc-cyan);
+  cursor: pointer;
+}
+
+.simulation-control input[type="range"]:disabled {
+  cursor: not-allowed;
+}
+
+.simulation-results {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.simulation-result {
+  display: grid;
+  gap: 7px;
+  min-height: 76px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: rgba(7, 16, 25, 0.52);
+}
+
+.simulation-result span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.simulation-result strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.simulation-result-ok {
+  border-color: rgba(29, 215, 91, 0.25);
+  background: rgba(29, 215, 91, 0.05);
+}
+
+.simulation-result-warning {
+  border-color: rgba(255, 179, 71, 0.28);
+  background: rgba(255, 179, 71, 0.05);
+}
+
+.simulation-result-danger {
+  border-color: rgba(255, 83, 112, 0.32);
+  background: rgba(255, 83, 112, 0.06);
+}
+
+.simulation-result-running {
+  border-color: rgba(66, 211, 181, 0.38);
+  background: rgba(66, 211, 181, 0.08);
+  box-shadow: inset 0 0 24px rgba(66, 211, 181, 0.04);
+}
+
+.simulation-result-running strong {
+  color: var(--gc-green);
+}
+
+.simulation-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.simulation-reset {
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: rgba(7, 16, 25, 0.62);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.simulation-reset:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .simulation-results {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .simulation-panel .panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .simulation-controls,
+  .simulation-results {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* FIN E8.1 */
+
