@@ -1,31 +1,16 @@
 import type { GeoCoolingSnapshot } from "@/types/geocooling";
 
-function temp(v: number | null) {
-  return v === null ? "--.- °C" : `${v.toFixed(1)} °C`;
-}
+import {
+  EquipmentCard,
+  FlowArrow,
+  FlowState,
+  TemperatureBadge,
+} from "./system";
 
-function State({
-  label,
-  value,
-}: {
-  label: string;
-  value: boolean;
-}) {
-  return (
-    <div className="flow-state">
-      <span>{label}</span>
-
-      <span
-        className={
-          value
-            ? "flow-state-on"
-            : "flow-state-off"
-        }
-      >
-        {value ? "ON" : "OFF"}
-      </span>
-    </div>
-  );
+function temp(value: number | null): string {
+  return value === null
+    ? "--.- °C"
+    : `${value.toFixed(1)} °C`;
 }
 
 export function SystemFlow({
@@ -54,112 +39,80 @@ export function SystemFlow({
 
       <div className="hydraulic-flow">
 
-        <div className="equipment">
+        <EquipmentCard
+          title="💧 NAPPE"
+          value={temp(snapshot.sourceInTemperature)}
+        />
 
-          <div className="equipment-title">
-            💧 NAPPE
-          </div>
+        <FlowArrow />
 
-          <div className="equipment-value">
-            {temp(snapshot.sourceInTemperature)}
-          </div>
+        <EquipmentCard
+          title="♨ ÉCHANGEUR"
+          value={temp(snapshot.sourceOutTemperature)}
+        />
 
-        </div>
+        <FlowArrow />
 
-        <div className="flow-arrow">
-          ➜
-        </div>
+        <EquipmentCard
+          title="⚙ POMPE"
+          value={
+            snapshot.pumpRunning
+              ? "EN SERVICE"
+              : "ARRÊT"
+          }
+        />
 
-        <div className="equipment">
+        <FlowArrow />
 
-          <div className="equipment-title">
-            ♨ ÉCHANGEUR
-          </div>
-
-          <div className="equipment-value">
-            {temp(snapshot.sourceOutTemperature)}
-          </div>
-
-        </div>
-
-        <div className="flow-arrow">
-          ➜
-        </div>
-
-        <div className="equipment">
-
-          <div className="equipment-title">
-            ⚙ POMPE
-          </div>
-
-          <div className="equipment-value">
-            {snapshot.pumpRunning ? "EN SERVICE" : "ARRÊT"}
-          </div>
-
-        </div>
-
-        <div className="flow-arrow">
-          ➜
-        </div>
-
-        <div className="equipment">
-
-          <div className="equipment-title">
-            🏠 PLANCHER
-          </div>
-
-          <div className="equipment-value">
-            {temp(snapshot.supplyTemperature)}
-          </div>
-
-        </div>
+        <EquipmentCard
+          title="🏠 PLANCHER"
+          value={temp(snapshot.supplyTemperature)}
+        />
 
       </div>
 
       <div className="flow-states">
 
-        <State
+        <FlowState
           label="Pompe"
           value={snapshot.pumpRunning}
         />
 
-        <State
+        <FlowState
           label="Vanne"
           value={snapshot.valveOpen}
         />
 
-        <State
+        <FlowState
           label="Sécurité"
-          value={snapshot.safetySafe ?? false}
+          value={snapshot.safetySafe}
+          activeLabel="OK"
+          inactiveLabel="ALARME"
         />
 
       </div>
 
       <div className="flow-temps">
 
-        <div>
-          <strong>Départ</strong>
-          <br />
-          {temp(snapshot.supplyTemperature)}
-        </div>
+        <TemperatureBadge
+          label="Départ"
+          value={snapshot.supplyTemperature}
+        />
 
-        <div>
-          <strong>Retour</strong>
-          <br />
-          {temp(snapshot.returnTemperature)}
-        </div>
+        <TemperatureBadge
+          label="Retour"
+          value={snapshot.returnTemperature}
+        />
 
-        <div>
-          <strong>Source</strong>
-          <br />
-          {temp(snapshot.sourceInTemperature)}
-        </div>
+        <TemperatureBadge
+          label="Source"
+          value={snapshot.sourceInTemperature}
+        />
 
-        <div>
-          <strong>Rejet</strong>
-          <br />
-          {temp(snapshot.sourceOutTemperature)}
-        </div>
+        <TemperatureBadge
+          label="Rejet"
+          value={snapshot.sourceOutTemperature}
+        />
 
       </div>
 
