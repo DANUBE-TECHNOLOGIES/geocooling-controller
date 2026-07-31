@@ -1821,3 +1821,169 @@ button {
     border-bottom: 0;
   }
 }
+
+/* =========================================================
+   UI005.3 — DASHBOARD GRID ENTERPRISE
+========================================================= */
+
+.gc-command-layout {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.75fr)
+    minmax(320px, 0.75fr);
+  align-items: start;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.gc-command-layout__scada {
+  min-width: 0;
+}
+
+.gc-command-layout__scada > .panel,
+.gc-command-layout__scada > article {
+  height: 100%;
+}
+
+.gc-command-layout__side {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 18px;
+}
+
+.gc-command-layout__side > .gc-panel {
+  min-width: 0;
+}
+
+.gc-command-layout__side .gc-panel__body {
+  min-width: 0;
+}
+
+.gc-technical-section {
+  margin-top: 4px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(148, 179, 215, 0.11);
+}
+
+.gc-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 15px;
+}
+
+.gc-section-heading__eyebrow {
+  margin: 0 0 4px;
+  color: #4da3ff;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.gc-section-heading h2 {
+  margin: 0;
+  color: #e2eef7;
+  font-size: 1.05rem;
+  letter-spacing: -0.015em;
+}
+
+.gc-section-heading__status {
+  padding: 7px 10px;
+  border: 1px solid rgba(148, 179, 215, 0.12);
+  border-radius: 999px;
+  color: #7890a5;
+  background: rgba(148, 179, 215, 0.035);
+  font-size: 0.62rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.gc-technical-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 18px;
+}
+
+.gc-technical-grid > .gc-panel {
+  min-width: 0;
+  height: 100%;
+}
+
+.gc-technical-grid .gc-panel__body {
+  min-width: 0;
+}
+
+.gc-command-layout .system-flow-panel {
+  margin: 0;
+}
+
+.gc-command-layout .scada-v2 {
+  min-height: 100%;
+}
+
+.gc-command-layout__side .gc-brain-decision p {
+  max-height: 7.5rem;
+  overflow: auto;
+}
+
+.gc-command-layout__side .gc-brain-reasons {
+  max-height: 20rem;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.gc-command-layout__side .gc-brain-reasons::-webkit-scrollbar {
+  width: 5px;
+}
+
+.gc-command-layout__side .gc-brain-reasons::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 179, 215, 0.22);
+}
+
+@media (max-width: 1240px) {
+  .gc-command-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gc-command-layout__side {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1050px) {
+  .gc-technical-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .gc-technical-grid > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .gc-command-layout__side,
+  .gc-technical-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gc-technical-grid > :last-child {
+    grid-column: auto;
+  }
+
+  .gc-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .gc-section-heading__status {
+    white-space: normal;
+  }
+}

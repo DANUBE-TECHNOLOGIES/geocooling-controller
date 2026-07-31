@@ -5,6 +5,7 @@ import { ControllerStatusCard } from "@/components/dashboard/ControllerStatusCar
 import { HydraulicCard } from "@/components/dashboard/HydraulicCard";
 import { MissionHeader } from "@/components/dashboard/MissionHeader";
 import { RuntimeCard } from "@/components/dashboard/RuntimeCard";
+import { SystemFlow } from "@/components/dashboard/SystemFlow";
 import { ThermalCard } from "@/components/dashboard/ThermalCard";
 import { AppShell } from "@/components/layout/AppShell";
 import { useGeoCooling } from "@/hooks/useGeoCooling";
@@ -43,17 +44,29 @@ export default function Home() {
       {loading && !snapshot ? (
         <section className="gc-loading-state">
           <div className="gc-loading-spinner" />
+
           <div>
-            <strong>Connexion au contrôleur GeoCooling…</strong>
-            <span>Chargement du premier snapshot.</span>
+            <strong>
+              Connexion au contrôleur GeoCooling…
+            </strong>
+
+            <span>
+              Chargement du premier snapshot.
+            </span>
           </div>
         </section>
       ) : null}
 
       {error ? (
-        <section className="gc-error-banner" role="alert">
+        <section
+          className="gc-error-banner"
+          role="alert"
+        >
           <div>
-            <strong>Communication interrompue</strong>
+            <strong>
+              Communication interrompue
+            </strong>
+
             <p>{error}</p>
           </div>
 
@@ -68,23 +81,59 @@ export default function Home() {
         </section>
       ) : null}
 
-      <div className="gc-dashboard-grid">
-        <ControllerStatusCard
-          snapshot={snapshot}
-          connected={connected}
-        />
+      {snapshot ? (
+        <>
+          <section
+            className="gc-command-layout"
+            aria-label="Supervision principale"
+          >
+            <div className="gc-command-layout__scada">
+              <SystemFlow snapshot={snapshot} />
+            </div>
 
-        <ThermalCard snapshot={snapshot} />
+            <aside className="gc-command-layout__side">
+              <BrainCard snapshot={snapshot} />
 
-        <HydraulicCard snapshot={snapshot} />
+              <ControllerStatusCard
+                snapshot={snapshot}
+                connected={connected}
+              />
+            </aside>
+          </section>
 
-        <BrainCard snapshot={snapshot} />
+          <section
+            className="gc-technical-section"
+            aria-labelledby="gc-technical-title"
+          >
+            <header className="gc-section-heading">
+              <div>
+                <p className="gc-section-heading__eyebrow">
+                  EXPLOITATION
+                </p>
 
-        <RuntimeCard
-          snapshot={snapshot}
-          lastUpdate={lastUpdate}
-        />
-      </div>
+                <h2 id="gc-technical-title">
+                  Données techniques
+                </h2>
+              </div>
+
+              <span className="gc-section-heading__status">
+                Mise à jour automatique toutes les 5 secondes
+              </span>
+            </header>
+
+            <div className="gc-technical-grid">
+              <ThermalCard snapshot={snapshot} />
+
+              <HydraulicCard snapshot={snapshot} />
+
+              <RuntimeCard
+                snapshot={snapshot}
+                lastUpdate={lastUpdate}
+              />
+            </div>
+          </section>
+        </>
+      ) : null}
     </AppShell>
   );
 }
