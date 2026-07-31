@@ -1987,3 +1987,380 @@ button {
     white-space: normal;
   }
 }
+
+/* =========================================================
+   UI005.4 — BRAIN ENTERPRISE
+========================================================= */
+
+.gc-brain-console .gc-panel__body {
+  display: grid;
+  gap: 16px;
+}
+
+.gc-brain-console__decision {
+  display: grid;
+  grid-template-columns:
+    minmax(92px, 0.32fr)
+    minmax(0, 1fr);
+  gap: 14px;
+}
+
+.gc-brain-console__decision-code,
+.gc-brain-console__decision-text {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(148, 179, 215, 0.12);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(17, 36, 59, 0.72),
+      rgba(7, 19, 33, 0.72)
+    );
+}
+
+.gc-brain-console__decision-code {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.gc-brain-console__decision-code span,
+.gc-brain-console__criteria > header span,
+.gc-brain-console__reasons > header span {
+  color: #647d94;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.gc-brain-console__decision-code strong {
+  color: #54d8ff;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  font-size: 0.92rem;
+}
+
+.gc-brain-console__decision-text strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #dceefa;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.gc-brain-console__decision-text p {
+  max-height: 8rem;
+  overflow: auto;
+  margin: 0;
+  color: #8fa4ba;
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.gc-brain-console__gauges {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gc-brain-gauge {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(148, 179, 215, 0.11);
+  border-radius: 13px;
+  background: rgba(148, 179, 215, 0.025);
+}
+
+.gc-brain-gauge header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gc-brain-gauge header span {
+  color: #647d94;
+  font-size: 0.55rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.gc-brain-gauge header strong {
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+}
+
+.gc-brain-gauge__value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 10px 0 9px;
+}
+
+.gc-brain-gauge__value strong {
+  color: #e4f3fc;
+  font-size: 1.55rem;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.gc-brain-gauge__value span {
+  color: #7890a5;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.gc-brain-gauge__track {
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 179, 215, 0.1);
+}
+
+.gc-brain-gauge__fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 500ms ease;
+}
+
+.gc-brain-gauge__fill.is-good {
+  background:
+    linear-gradient(
+      90deg,
+      #24b882,
+      #43d69e
+    );
+  box-shadow:
+    0 0 10px rgba(67, 214, 158, 0.3);
+}
+
+.gc-brain-gauge__fill.is-warning {
+  background:
+    linear-gradient(
+      90deg,
+      #d9a62e,
+      #f4c95d
+    );
+}
+
+.gc-brain-gauge__fill.is-critical {
+  background:
+    linear-gradient(
+      90deg,
+      #d94a5b,
+      #ff6b7a
+    );
+}
+
+.gc-brain-gauge .is-good {
+  color: #43d69e;
+}
+
+.gc-brain-gauge .is-warning {
+  color: #f4c95d;
+}
+
+.gc-brain-gauge .is-critical {
+  color: #ff6b7a;
+}
+
+.gc-brain-console__criteria,
+.gc-brain-console__reasons {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(148, 179, 215, 0.1);
+  border-radius: 14px;
+  background: rgba(7, 19, 33, 0.36);
+}
+
+.gc-brain-console__criteria > header,
+.gc-brain-console__reasons > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 11px;
+}
+
+.gc-brain-console__criteria > header strong,
+.gc-brain-console__reasons > header strong {
+  color: #a9bed0;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 0.65rem;
+}
+
+.gc-brain-criteria-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.gc-brain-criterion {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid rgba(148, 179, 215, 0.08);
+  border-radius: 10px;
+  background: rgba(148, 179, 215, 0.022);
+}
+
+.gc-brain-criterion__state {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.gc-brain-criterion.is-available
+  .gc-brain-criterion__state {
+  color: #43d69e;
+  background: rgba(67, 214, 158, 0.1);
+}
+
+.gc-brain-criterion.is-missing
+  .gc-brain-criterion__state {
+  color: #7890a5;
+  background: rgba(120, 144, 165, 0.1);
+}
+
+.gc-brain-criterion div {
+  min-width: 0;
+}
+
+.gc-brain-criterion strong {
+  display: block;
+  overflow: hidden;
+  color: #c8d9e5;
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-brain-criterion small {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: #6e879d;
+  font-size: 0.57rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-brain-console__reasons {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.gc-brain-console__reasons ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gc-brain-console__reasons li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.gc-brain-console__reasons li > span {
+  display: grid;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(77, 163, 255, 0.15);
+  border-radius: 7px;
+  color: #4da3ff;
+  background: rgba(77, 163, 255, 0.06);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 0.54rem;
+  font-weight: 900;
+}
+
+.gc-brain-console__reasons li p {
+  margin: 2px 0 0;
+  color: #8fa4ba;
+  font-size: 0.65rem;
+  line-height: 1.45;
+}
+
+.gc-brain-console__empty {
+  margin: 0;
+  color: #7890a5;
+  font-size: 0.66rem;
+}
+
+.gc-brain-console__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gc-brain-console__footer div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 179, 215, 0.09);
+  border-radius: 999px;
+  color: #7890a5;
+  background: rgba(148, 179, 215, 0.025);
+  font-size: 0.57rem;
+  font-weight: 750;
+}
+
+.gc-brain-console__footer div > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gc-brain-console__footer .is-positive {
+  background: #43d69e;
+  box-shadow: 0 0 8px rgba(67, 214, 158, 0.5);
+}
+
+.gc-brain-console__footer .is-warning {
+  background: #f4c95d;
+}
+
+.gc-brain-console__footer .is-negative {
+  background: #ff6b7a;
+}
+
+.gc-brain-console__footer .is-neutral {
+  background: #7890a5;
+}
+
+@media (max-width: 480px) {
+  .gc-brain-console__decision,
+  .gc-brain-console__gauges,
+  .gc-brain-criteria-grid {
+    grid-template-columns: 1fr;
+  }
+}
