@@ -130,7 +130,7 @@ export function SystemFlow({
 
         <State
           label="Sécurité"
-          value={snapshot.safetyOk}
+          value={snapshot.safetySafe ?? false}
         />
 
       </div>
