@@ -1,17 +1,40 @@
-import type { Metadata } from "next";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "GeoCooling Enterprise",
-  description: "Supervision intelligente du système GeoCooling",
+import { GeoCoolingProvider } from "@/store/geocooling/provider/GeoCoolingProvider";
+
+import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+
+export const metadata = {
+    title: "GeoCooling Controller",
+    description: "Enterprise Dashboard"
 };
 
 export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
-  return (
-    <html lang="fr">
-      <body>{children}</body>
-    </html>
-  );
+    children,
+}:{
+    children:React.ReactNode;
+}){
+
+    return(
+
+<html lang="fr">
+
+<body>
+
+<GeoCoolingProvider>
+
+<ErrorBoundary>
+
+{children}
+
+</ErrorBoundary>
+
+</GeoCoolingProvider>
+
+</body>
+
+</html>
+
+    );
+
 }

@@ -1,23 +1,15 @@
 "use client";
 
-import { DecisionPanel } from "@/components/dashboard/DecisionPanel";
-import { OverviewGrid } from "@/components/dashboard/OverviewGrid";
-import { SystemFlow } from "@/components/dashboard/SystemFlow";
+import { BrainCard } from "@/components/dashboard/BrainCard";
+import { ControllerStatusCard } from "@/components/dashboard/ControllerStatusCard";
+import { HydraulicCard } from "@/components/dashboard/HydraulicCard";
+import { RuntimeCard } from "@/components/dashboard/RuntimeCard";
+import { ThermalCard } from "@/components/dashboard/ThermalCard";
 import { AppShell } from "@/components/layout/AppShell";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useGeoCooling } from "@/hooks/useGeoCooling";
 
-function formatUpdate(date: Date | null): string {
-  if (!date) return "--:--:--";
-
-  return date.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 export default function Home() {
-
   const {
     snapshot,
     loading,
@@ -28,127 +20,110 @@ export default function Home() {
   } = useGeoCooling();
 
   const connected = Boolean(snapshot && !error);
+  const mode = String(snapshot?.mode ?? "INCONNU");
 
   return (
     <AppShell
       connected={connected}
-      mode={snapshot?.mode}
+      mode={mode}
+      refreshing={refreshing}
+      lastUpdate={lastUpdate}
+      onRefresh={() => {
+        void refresh();
+      }}
     >
-
-      <section className="dashboard-header">
-
+      <section className="gc-hero">
         <div>
-
-          <div className="dashboard-tag">
+          <p className="gc-hero__eyebrow">
             SUPERVISION TEMPS RÉEL
-          </div>
+          </p>
 
-          <h1 className="dashboard-title">
-            GeoCooling Enterprise
-          </h1>
+          <h2 className="gc-hero__title">
+            Pilotage intelligent du rafraîchissement géothermique
+          </h2>
 
-          <div className="dashboard-subtitle">
-            Pilotage intelligent du bâtiment
-          </div>
-
+          <p className="gc-hero__description">
+            Surveillance du bâtiment, du circuit hydraulique et des décisions
+            du moteur GeoCooling Brain.
+          </p>
         </div>
 
-        <div className="dashboard-actions">
+        <div className="gc-hero__badges">
+          <StatusBadge
+            label={snapshot?.pumpRunning ? "POMPE ACTIVE" : "POMPE ARRÊTÉE"}
+            tone={snapshot?.pumpRunning ? "success" : "neutral"}
+            pulse={snapshot?.pumpRunning === true}
+          />
 
-          <button
-            className="live-pill live-button"
-            onClick={() => void refresh(false)}
-            disabled={refreshing}
-          >
+          <StatusBadge
+            label={snapshot?.valveOpen ? "VANNE OUVERTE" : "VANNE FERMÉE"}
+            tone={snapshot?.valveOpen ? "success" : "neutral"}
+          />
 
-            {refreshing
-              ? "Synchronisation..."
-              : `Dernière MAJ : ${formatUpdate(lastUpdate)}`}
-
-          </button>
-
+          <StatusBadge
+            label={
+              snapshot?.safetySafe === true
+                ? "SÉCURITÉ OK"
+                : snapshot?.safetySafe === false
+                  ? "ALERTE SÉCURITÉ"
+                  : "SÉCURITÉ INCONNUE"
+            }
+            tone={
+              snapshot?.safetySafe === true
+                ? "success"
+                : snapshot?.safetySafe === false
+                  ? "danger"
+                  : "neutral"
+            }
+          />
         </div>
-
       </section>
 
-      {loading && !snapshot && (
-
-        <section className="state-panel">
-
-          <div className="state-spinner" />
-
+      {loading && !snapshot ? (
+        <section className="gc-loading-state">
+          <div className="gc-loading-spinner" />
           <div>
-
-            <h2>
-              Connexion au contrôleur...
-            </h2>
-
-            <p>
-              Chargement des données GeoCooling.
-            </p>
-
+            <strong>Connexion au contrôleur GeoCooling…</strong>
+            <span>Chargement du premier snapshot.</span>
           </div>
-
         </section>
+      ) : null}
 
-      )}
-
-      {error && (
-
-        <section
-          className="state-panel state-error"
-        >
-
+      {error ? (
+        <section className="gc-error-banner" role="alert">
           <div>
-
-            <h2>
-              Backend indisponible
-            </h2>
-
-            <p>
-              {error}
-            </p>
-
+            <strong>Communication interrompue</strong>
+            <p>{error}</p>
           </div>
 
           <button
-            onClick={() => void refresh(false)}
+            type="button"
+            onClick={() => {
+              void refresh();
+            }}
           >
             Réessayer
           </button>
-
         </section>
+      ) : null}
 
-      )}
+      <div className="gc-dashboard-grid">
+        <ControllerStatusCard
+          snapshot={snapshot}
+          connected={connected}
+        />
 
-      {snapshot && (
+        <ThermalCard snapshot={snapshot} />
 
-        <>
+        <HydraulicCard snapshot={snapshot} />
 
-          <OverviewGrid
-            snapshot={snapshot}
-          />
+        <BrainCard snapshot={snapshot} />
 
-          <section
-            className="enterprise-grid"
-          >
-
-            <DecisionPanel
-              decision={snapshot.decision}
-            />
-
-            <SystemFlow
-              snapshot={snapshot}
-            />
-
-          </section>
-
-        </>
-
-      )}
-
+        <RuntimeCard
+          snapshot={snapshot}
+          lastUpdate={lastUpdate}
+        />
+      </div>
     </AppShell>
-
   );
-
 }

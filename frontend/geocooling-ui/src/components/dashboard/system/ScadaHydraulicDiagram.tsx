@@ -4,254 +4,221 @@ type Props = {
   snapshot: GeoCoolingSnapshot;
 };
 
-function temp(value: number | null): string {
+function temperature(value: number | null): string {
   return value === null ? "--.- °C" : `${value.toFixed(1)} °C`;
 }
 
-export default function ScadaHydraulicDiagram({
-  snapshot,
-}: Props) {
-  const flowActive =
-    snapshot.pumpRunning &&
-    snapshot.valveOpen &&
-    snapshot.safetySafe !== false;
+function statusLabel(value: boolean | null, active: string, inactive: string): string {
+  if (value === null) return "INCONNU";
+  return value ? active : inactive;
+}
+
+export default function ScadaHydraulicDiagram({ snapshot }: Props) {
+  const safe = snapshot.safetySafe !== false;
+  const sourceFlow = snapshot.valveOpen && safe;
+  const floorFlow = snapshot.pumpRunning && snapshot.valveOpen && safe;
+  const fault = snapshot.safetySafe === false;
+
+  const sourceClass = sourceFlow
+    ? "scada-v2-pipe scada-v2-pipe-source scada-v2-flow"
+    : "scada-v2-pipe scada-v2-pipe-idle";
+
+  const floorClass = floorFlow
+    ? "scada-v2-pipe scada-v2-pipe-floor scada-v2-flow"
+    : "scada-v2-pipe scada-v2-pipe-idle";
 
   return (
-    <div className="scada-diagram-shell">
-      <svg
-        className="scada-diagram"
-        viewBox="0 0 1000 420"
-        role="img"
-        aria-label="Synoptique hydraulique GeoCooling"
-      >
-        <defs>
-          <linearGradient
-            id="pipeGradient"
-            x1="0"
-            y1="0"
-            x2="1"
-            y2="0"
-          >
-            <stop offset="0%" stopColor="#2575a8" />
-            <stop offset="55%" stopColor="#42d3b5" />
-            <stop offset="100%" stopColor="#52a7d8" />
-          </linearGradient>
+    <section
+      className={`scada-v2 ${fault ? "scada-v2-fault" : ""}`}
+      aria-label="Synoptique hydraulique GeoCooling"
+    >
+      <div className="scada-v2-topbar">
+        <div>
+          <span className="scada-v2-eyebrow">SCHÉMA DE PROCESS</span>
+          <strong>Chaîne hydraulique complète</strong>
+        </div>
 
-          <filter id="glow">
-            <feGaussianBlur stdDeviation="4" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
+        <div className="scada-v2-legend" aria-label="Légende">
+          <span><i className="scada-v2-dot scada-v2-dot-source" /> Source</span>
+          <span><i className="scada-v2-dot scada-v2-dot-floor" /> Plancher</span>
+          <span><i className="scada-v2-dot scada-v2-dot-idle" /> Inactif</span>
+        </div>
+      </div>
 
-          <marker
-            id="arrowHead"
-            markerWidth="10"
-            markerHeight="10"
-            refX="8"
-            refY="5"
-            orient="auto"
-          >
-            <path
-              d="M0,0 L10,5 L0,10 Z"
-              fill="#42d3b5"
-            />
-          </marker>
-        </defs>
+      <div className="scada-v2-canvas">
+        <svg
+          className="scada-v2-svg"
+          viewBox="0 0 1180 500"
+          role="img"
+          aria-labelledby="scada-v2-title scada-v2-desc"
+        >
+          <title id="scada-v2-title">Circuit hydraulique GeoCooling</title>
+          <desc id="scada-v2-desc">
+            Nappe, échangeur, électrovanne, ballon tampon, circulateur et plancher.
+          </desc>
 
-        <rect
-          x="20"
-          y="20"
-          width="960"
-          height="380"
-          rx="24"
-          className="scada-background"
-        />
+          <defs>
+            <filter id="scadaGlow" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <marker
+              id="scadaArrowSource"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8"
+              refY="3"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M0,0 L0,6 L9,3 z" className="scada-v2-arrow-source" />
+            </marker>
+            <marker
+              id="scadaArrowFloor"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8"
+              refY="3"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M0,0 L0,6 L9,3 z" className="scada-v2-arrow-floor" />
+            </marker>
+          </defs>
 
-        <path
-          d="M160 205 H295"
-          className={`scada-pipe ${flowActive ? "scada-pipe-active scada-pipe-flow" : ""}`}
-          markerEnd="url(#arrowHead)"
-        />
-
-        <path
-          d="M425 205 H560"
-          className={`scada-pipe ${flowActive ? "scada-pipe-active scada-pipe-flow" : ""}`}
-          markerEnd="url(#arrowHead)"
-        />
-
-        <path
-          d="M690 205 H825"
-          className={`scada-pipe ${flowActive ? "scada-pipe-active scada-pipe-flow" : ""}`}
-          markerEnd="url(#arrowHead)"
-        />
-
-        <g transform="translate(70 135)">
-          <rect
-            width="120"
-            height="140"
-            rx="18"
-            className="scada-unit"
-          />
-          <circle
-            cx="60"
-            cy="48"
-            r="27"
-            className="scada-source-icon"
+          <path
+            className={sourceClass}
+            markerEnd={sourceFlow ? "url(#scadaArrowSource)" : undefined}
+            d="M130 250 H260"
           />
           <path
-            d="M48 50 C48 37 60 27 60 27 C60 27 72 37 72 50 C72 62 66 69 60 69 C54 69 48 62 48 50Z"
-            className="scada-water-drop"
-          />
-          <text
-            x="60"
-            y="96"
-            textAnchor="middle"
-            className="scada-unit-title"
-          >
-            NAPPE
-          </text>
-          <text
-            x="60"
-            y="119"
-            textAnchor="middle"
-            className="scada-unit-value"
-          >
-            {temp(snapshot.sourceInTemperature)}
-          </text>
-        </g>
-
-        <g transform="translate(305 135)">
-          <rect
-            width="120"
-            height="140"
-            rx="18"
-            className="scada-unit"
-          />
-          <rect
-            x="36"
-            y="25"
-            width="48"
-            height="50"
-            rx="8"
-            className="scada-exchanger"
+            className={sourceClass}
+            markerEnd={sourceFlow ? "url(#scadaArrowSource)" : undefined}
+            d="M390 250 H500"
           />
           <path
-            d="M44 37 H76 M44 49 H76 M44 61 H76"
-            className="scada-exchanger-lines"
-          />
-          <text
-            x="60"
-            y="96"
-            textAnchor="middle"
-            className="scada-unit-title"
-          >
-            ÉCHANGEUR
-          </text>
-          <text
-            x="60"
-            y="119"
-            textAnchor="middle"
-            className="scada-unit-value"
-          >
-            {temp(snapshot.sourceOutTemperature)}
-          </text>
-        </g>
-
-        <g transform="translate(570 135)">
-          <rect
-            width="120"
-            height="140"
-            rx="18"
-            className="scada-unit"
-          />
-          <circle
-            cx="60"
-            cy="50"
-            r="28"
-            className={
-              snapshot.pumpRunning
-                ? "scada-pump scada-pump-running"
-                : "scada-pump"
-            }
+            className={sourceClass}
+            markerEnd={sourceFlow ? "url(#scadaArrowSource)" : undefined}
+            d="M610 250 H720"
           />
           <path
-            d="M60 31 L73 55 L47 55 Z"
-            className="scada-pump-blade"
+            className={floorClass}
+            markerEnd={floorFlow ? "url(#scadaArrowFloor)" : undefined}
+            d="M850 250 H950"
           />
-          <text
-            x="60"
-            y="96"
-            textAnchor="middle"
-            className="scada-unit-title"
-          >
-            POMPE
-          </text>
-          <text
-            x="60"
-            y="119"
-            textAnchor="middle"
-            className="scada-unit-value"
-          >
-            {snapshot.pumpRunning ? "MARCHE" : "ARRÊT"}
-          </text>
-        </g>
 
-        <g transform="translate(835 135)">
-          <rect
-            width="120"
-            height="140"
-            rx="18"
-            className="scada-unit"
-          />
-          <path
-            d="M32 35 H88 V68 H32 Z"
-            className="scada-floor"
-          />
-          <path
-            d="M38 43 H82 M38 53 H82 M38 63 H82"
-            className="scada-floor-lines"
-          />
-          <text
-            x="60"
-            y="96"
-            textAnchor="middle"
-            className="scada-unit-title"
-          >
-            PLANCHER
-          </text>
-          <text
-            x="60"
-            y="119"
-            textAnchor="middle"
-            className="scada-unit-value"
-          >
-            {temp(snapshot.supplyTemperature)}
-          </text>
-        </g>
+          <g className="scada-v2-equipment">
+            <rect x="20" y="170" width="110" height="160" rx="24" />
+            <path className="scada-v2-water" d="M45 270 C62 245 78 292 102 260" />
+            <path className="scada-v2-water" d="M45 292 C62 267 78 314 102 282" />
+            <text x="75" y="205" textAnchor="middle" className="scada-v2-label">NAPPE</text>
+            <text x="75" y="225" textAnchor="middle" className="scada-v2-sublabel">SOURCE</text>
+          </g>
 
-        <g transform="translate(420 315)">
-          <rect
-            width="160"
-            height="48"
-            rx="12"
-            className={
-              snapshot.valveOpen
-                ? "scada-status-box scada-status-ok"
-                : "scada-status-box"
-            }
-          />
-          <text
-            x="80"
-            y="30"
-            textAnchor="middle"
-            className="scada-status-text"
-          >
-            VANNE {snapshot.valveOpen ? "OUVERTE" : "FERMÉE"}
-          </text>
-        </g>
-      </svg>
-    </div>
+          <g className="scada-v2-equipment">
+            <rect x="260" y="160" width="130" height="180" rx="24" />
+            <path className="scada-v2-exchanger" d="M292 205 L358 295 M358 205 L292 295" />
+            <text x="325" y="190" textAnchor="middle" className="scada-v2-label">ÉCHANGEUR</text>
+            <text x="325" y="317" textAnchor="middle" className="scada-v2-sublabel">PLAQUES</text>
+          </g>
+
+          <g className={`scada-v2-valve ${snapshot.valveOpen ? "is-open" : "is-closed"}`}>
+            <rect x="500" y="185" width="110" height="130" rx="22" />
+            <path d="M530 235 L555 250 L530 265 Z" />
+            <path d="M580 235 L555 250 L580 265 Z" />
+            <line x1="555" y1="220" x2="555" y2="190" />
+            <circle cx="555" cy="183" r="10" />
+            <text x="555" y="295" textAnchor="middle" className="scada-v2-label">VANNE</text>
+          </g>
+
+          <g className="scada-v2-equipment">
+            <rect x="720" y="155" width="130" height="190" rx="28" />
+            <path className="scada-v2-tank-level" d="M740 275 Q785 250 830 275 V320 H740 Z" />
+            <line x1="738" y1="220" x2="832" y2="220" />
+            <text x="785" y="188" textAnchor="middle" className="scada-v2-label">BALLON</text>
+            <text x="785" y="208" textAnchor="middle" className="scada-v2-sublabel">TAMPON</text>
+          </g>
+
+          <g className={`scada-v2-pump ${snapshot.pumpRunning ? "is-running" : "is-stopped"}`}>
+            <circle cx="900" cy="250" r="46" />
+            <path className="scada-v2-pump-rotor" d="M900 218 C927 218 927 242 900 250 C873 258 873 282 900 282" />
+            <circle cx="900" cy="250" r="7" />
+            <text x="900" y="320" textAnchor="middle" className="scada-v2-label">POMPE</text>
+          </g>
+
+          <g className="scada-v2-equipment">
+            <rect x="950" y="160" width="210" height="180" rx="26" />
+            <path className="scada-v2-floor-loop" d="M978 215 H1132 V238 H978 V261 H1132 V284 H978" />
+            <text x="1055" y="195" textAnchor="middle" className="scada-v2-label">PLANCHER</text>
+            <text x="1055" y="318" textAnchor="middle" className="scada-v2-sublabel">RAFRAÎCHISSANT</text>
+          </g>
+
+          <g transform="translate(145 192)">
+            <rect className="scada-v2-temp-box" width="98" height="42" rx="10" />
+            <text x="49" y="17" textAnchor="middle" className="scada-v2-temp-label">ENTRÉE</text>
+            <text x="49" y="33" textAnchor="middle" className="scada-v2-temp-value">
+              {temperature(snapshot.sourceInTemperature)}
+            </text>
+          </g>
+
+          <g transform="translate(395 266)">
+            <rect className="scada-v2-temp-box" width="98" height="42" rx="10" />
+            <text x="49" y="17" textAnchor="middle" className="scada-v2-temp-label">SORTIE</text>
+            <text x="49" y="33" textAnchor="middle" className="scada-v2-temp-value">
+              {temperature(snapshot.sourceOutTemperature)}
+            </text>
+          </g>
+
+          <g transform="translate(850 165)">
+            <rect className="scada-v2-temp-box" width="98" height="42" rx="10" />
+            <text x="49" y="17" textAnchor="middle" className="scada-v2-temp-label">DÉPART</text>
+            <text x="49" y="33" textAnchor="middle" className="scada-v2-temp-value">
+              {temperature(snapshot.supplyTemperature)}
+            </text>
+          </g>
+
+          <g transform="translate(1030 355)">
+            <rect className="scada-v2-temp-box" width="110" height="42" rx="10" />
+            <text x="55" y="17" textAnchor="middle" className="scada-v2-temp-label">RETOUR</text>
+            <text x="55" y="33" textAnchor="middle" className="scada-v2-temp-value">
+              {temperature(snapshot.returnTemperature)}
+            </text>
+          </g>
+        </svg>
+      </div>
+
+      <div className="scada-v2-equipment-strip">
+        <div className="scada-v2-state-card">
+          <span>ÉLECTROVANNE</span>
+          <strong className={snapshot.valveOpen ? "is-positive" : "is-neutral"}>
+            {statusLabel(snapshot.valveOpen, "OUVERTE", "FERMÉE")}
+          </strong>
+        </div>
+
+        <div className="scada-v2-state-card">
+          <span>CIRCULATEUR</span>
+          <strong className={snapshot.pumpRunning ? "is-positive" : "is-neutral"}>
+            {statusLabel(snapshot.pumpRunning, "EN MARCHE", "À L’ARRÊT")}
+          </strong>
+        </div>
+
+        <div className="scada-v2-state-card">
+          <span>SÉCURITÉ</span>
+          <strong className={snapshot.safetySafe === false ? "is-negative" : "is-positive"}>
+            {statusLabel(snapshot.safetySafe, "VALIDÉE", "ALARME")}
+          </strong>
+        </div>
+
+        <div className="scada-v2-state-card">
+          <span>CONTRÔLEUR</span>
+          <strong className={snapshot.deviceReady ? "is-positive" : "is-neutral"}>
+            {statusLabel(snapshot.deviceReady, "PRÊT", "NON PRÊT")}
+          </strong>
+        </div>
+      </div>
+    </section>
   );
 }

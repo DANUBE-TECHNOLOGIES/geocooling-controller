@@ -1,0 +1,136 @@
+"use client";
+
+import Link from "next/link";
+import { DecisionPanel } from "@/components/dashboard/DecisionPanel";
+import { OverviewGrid } from "@/components/dashboard/OverviewGrid";
+import { SystemFlow } from "@/components/dashboard/SystemFlow";
+import { AppShell } from "@/components/layout/AppShell";
+import { useGeoCooling } from "@/hooks/useGeoCooling";
+
+function formatUpdate(date: Date | null): string {
+  if (!date) return "--:--:--";
+
+  return date.toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+export default function Home() {
+  const {
+    snapshot,
+    loading,
+    refreshing,
+    error,
+    lastUpdate,
+    refresh,
+  } = useGeoCooling();
+
+  const connected = Boolean(snapshot && !error);
+
+  return (
+    <AppShell connected={connected} mode={snapshot?.mode}>
+      <section className="dashboard-header mission-header">
+        <div>
+          <div className="dashboard-tag">CENTRE DE CONTRÔLE</div>
+          <h1 className="dashboard-title">GeoCooling Mission Control</h1>
+          <div className="dashboard-subtitle">
+            Supervision hydraulique, décision du Brain et état des équipements
+          </div>
+        </div>
+
+        <div className="dashboard-actions">
+          <span
+            className={
+              connected
+                ? "mission-connection mission-connection-online"
+                : "mission-connection mission-connection-offline"
+            }
+          >
+            <span className="mission-connection-dot" />
+            {connected ? "CONTRÔLEUR CONNECTÉ" : "CONTRÔLEUR HORS LIGNE"}
+          </span>
+
+          <button
+            className="live-pill live-button"
+            onClick={() => void refresh(false)}
+            disabled={refreshing}
+            type="button"
+          >
+            {refreshing
+              ? "Synchronisation..."
+              : `Dernière MAJ : ${formatUpdate(lastUpdate)}`}
+          </button>
+        </div>
+      </section>
+
+      {loading && !snapshot && (
+        <section className="state-panel">
+          <div className="state-spinner" />
+          <div>
+            <h2>Connexion au contrôleur...</h2>
+            <p>Chargement des données GeoCooling.</p>
+          </div>
+        </section>
+      )}
+
+      {error && (
+        <section className="state-panel state-error">
+          <div>
+            <h2>Backend indisponible</h2>
+            <p>{error}</p>
+          </div>
+
+          <button onClick={() => void refresh(false)} type="button">
+            Réessayer
+          </button>
+        </section>
+      )}
+
+      {snapshot && (
+        <>
+          <OverviewGrid snapshot={snapshot} />
+
+          <section className="mission-control" aria-label="Centre de contrôle">
+            <div className="mission-main">
+              <SystemFlow snapshot={snapshot} />
+            </div>
+
+            <aside className="mission-side">
+              <DecisionPanel decision={snapshot.decision} />
+            </aside>
+          </section>
+
+          <section className="mission-bottom" aria-label="Accès rapides">
+            <Link className="panel mission-link-card" href="/historian">
+              <div className="mission-link-icon" aria-hidden="true">↗</div>
+              <div>
+                <div className="mission-link-kicker">ANALYSE</div>
+                <h2>Historian</h2>
+                <p>
+                  Consulter l’évolution des températures, des états hydrauliques
+                  et des décisions du Brain.
+                </p>
+              </div>
+              <span className="mission-link-action">Ouvrir l’historique →</span>
+            </Link>
+
+            <Link className="panel mission-link-card" href="/alarms">
+              <div className="mission-link-icon" aria-hidden="true">!</div>
+              <div>
+                <div className="mission-link-kicker">SURVEILLANCE</div>
+                <h2>Alarmes et événements</h2>
+                <p>
+                  Vérifier les défauts, les sécurités et les événements récents
+                  du contrôleur.
+                </p>
+              </div>
+              <span className="mission-link-action">Voir les alarmes →</span>
+            </Link>
+          </section>
+        </>
+      )}
+    </AppShell>
+  );
+}

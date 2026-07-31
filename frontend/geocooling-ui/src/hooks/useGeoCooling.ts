@@ -1,99 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchGeoCoolingSnapshot } from "@/lib/api";
-import type { GeoCoolingSnapshot } from "@/types/geocooling";
+import { useGeoCoolingStore } from "@/store/geocooling/hooks/useGeoCoolingStore";
 
-const POLLING_INTERVAL_MS = 2000;
+export function useGeoCooling(){
 
-export function useGeoCooling() {
-  const [snapshot, setSnapshot] = useState<GeoCoolingSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const {
 
-  const activeRequest = useRef<AbortController | null>(null);
+        state,
 
-  const refresh = useCallback(async (initial = false) => {
-    activeRequest.current?.abort();
+        refresh
 
-    const controller = new AbortController();
+    }=useGeoCoolingStore();
 
-    activeRequest.current = controller;
+    return{
 
-    if (initial) {
-      setLoading(true);
-    } else {
-      setRefreshing(true);
-    }
+        connected:state.connected,
 
-    try {
+        loading:state.loading,
 
-      const nextSnapshot = await fetchGeoCoolingSnapshot(
-        controller.signal
-      );
+        refreshing:state.refreshing,
 
-      setSnapshot(nextSnapshot);
+        snapshot:state.snapshot,
 
-      setLastUpdate(new Date());
+        lastUpdate:state.lastUpdate,
 
-      setError(null);
+        responseTime:state.responseTime,
 
-    } catch (cause) {
+        error:state.error,
 
-      if (
-        cause instanceof Error &&
-        cause.name === "AbortError"
-      ) {
-        return;
-      }
-
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Erreur GeoCooling inconnue"
-      );
-
-    } finally {
-
-      if (activeRequest.current === controller) {
-        setLoading(false);
-        setRefreshing(false);
-      }
-
-    }
-
-  }, []);
-
-  useEffect(() => {
-
-    const timer = setTimeout(() => {
-      void refresh(true);
-    }, 0);
-
-    const interval = window.setInterval(() => {
-      void refresh(false);
-    }, POLLING_INTERVAL_MS);
-
-    return () => {
-
-      clearTimeout(timer);
-
-      clearInterval(interval);
-
-      activeRequest.current?.abort();
+        refresh
 
     };
 
-  }, [refresh]);
-
-  return {
-    snapshot,
-    loading,
-    refreshing,
-    error,
-    lastUpdate,
-    refresh,
-  };
 }

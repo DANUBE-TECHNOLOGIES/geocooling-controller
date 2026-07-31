@@ -1,4 +1,5 @@
 import type { GeoCoolingSnapshot } from "@/types/geocooling";
+import { MissionHeader } from "./MissionHeader";
 import { MetricCard } from "./MetricCard";
 
 function format(v: number | null): string {
@@ -20,7 +21,9 @@ export function OverviewGrid({
       : "--";
 
   return (
-    <section className="overview-grid">
+    <>
+      <MissionHeader snapshot={snapshot} />
+      <section className="overview-grid">
 
       <MetricCard
         icon="🏠"
@@ -110,5 +113,6 @@ export function OverviewGrid({
       />
 
     </section>
+    </>
   );
 }

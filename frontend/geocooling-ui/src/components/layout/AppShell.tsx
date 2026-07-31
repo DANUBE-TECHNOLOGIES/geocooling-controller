@@ -1,24 +1,40 @@
 import type { ReactNode } from "react";
-import type { GeoCoolingMode } from "@/types/geocooling";
-import { MobileNav } from "./MobileNav";
-import { Sidebar } from "./Sidebar";
-import { Topbar } from "./Topbar";
+import { TopBar } from "@/components/layout/TopBar";
 
 type AppShellProps = {
+  connected: boolean;
+  mode?: string;
+  refreshing?: boolean;
+  lastUpdate?: Date | null;
+  onRefresh?: () => void;
   children: ReactNode;
-  connected?: boolean;
-  mode?: GeoCoolingMode;
 };
 
-export function AppShell({ children, connected, mode }: AppShellProps) {
+export function AppShell({
+  connected,
+  mode = "INCONNU",
+  refreshing = false,
+  lastUpdate = null,
+  onRefresh = () => undefined,
+  children,
+}: AppShellProps) {
   return (
-    <div className="app-shell">
-      <Sidebar />
-      <div className="main">
-        <Topbar connected={connected} mode={mode} />
-        <main className="content">{children}</main>
-      </div>
-      <MobileNav />
+    <div className="gc-app">
+      <TopBar
+        connected={connected}
+        mode={mode}
+        refreshing={refreshing}
+        lastUpdate={lastUpdate}
+        onRefresh={onRefresh}
+      />
+
+      <main className="gc-main">{children}</main>
+
+      <footer className="gc-footer">
+        <span>GeoCooling Controller</span>
+        <span>Supervision technique locale</span>
+        <span>Frontend Enterprise V3 — Sprint F001</span>
+      </footer>
     </div>
   );
 }
