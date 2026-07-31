@@ -16,6 +16,7 @@ export default function Home() {
     refreshing,
     error,
     lastUpdate,
+    responseTime,
     refresh,
   } = useGeoCooling();
 
@@ -28,6 +29,8 @@ export default function Home() {
       mode={mode}
       refreshing={refreshing}
       lastUpdate={lastUpdate}
+      generatedAt={snapshot?.generatedAt}
+      responseTime={responseTime}
       onRefresh={() => {
         void refresh();
       }}

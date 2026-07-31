@@ -6,15 +6,19 @@ type AppShellProps = {
   mode?: string;
   refreshing?: boolean;
   lastUpdate?: Date | null;
+  generatedAt?: string | null;
+  responseTime?: number;
   onRefresh?: () => void;
   children: ReactNode;
 };
 
 export function AppShell({
   connected,
-  mode = "INCONNU",
+  mode = "unknown",
   refreshing = false,
   lastUpdate = null,
+  generatedAt = null,
+  responseTime = 0,
   onRefresh = () => undefined,
   children,
 }: AppShellProps) {
@@ -25,6 +29,8 @@ export function AppShell({
         mode={mode}
         refreshing={refreshing}
         lastUpdate={lastUpdate}
+        generatedAt={generatedAt}
+        responseTime={responseTime}
         onRefresh={onRefresh}
       />
 
@@ -33,7 +39,7 @@ export function AppShell({
       <footer className="gc-footer">
         <span>GeoCooling Controller</span>
         <span>Supervision technique locale</span>
-        <span>Frontend Enterprise V3 — Sprint F001</span>
+        <span>Frontend Enterprise — UI005.1</span>
       </footer>
     </div>
   );

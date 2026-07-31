@@ -1345,3 +1345,121 @@ button {
     animation: none !important;
   }
 }
+
+/* =========================================================
+   UI005.1 — TOPBAR DE SUPERVISION
+========================================================= */
+
+.gc-topbar--enterprise {
+  gap: 22px;
+  min-height: 92px;
+}
+
+.gc-supervision-strip {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.gc-supervision-item {
+  display: flex;
+  min-height: 48px;
+  min-width: 100px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 11px;
+  border: 1px solid rgba(148, 179, 215, 0.13);
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(18, 37, 61, 0.68),
+      rgba(7, 19, 34, 0.68)
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 8px 22px rgba(0, 0, 0, 0.1);
+}
+
+.gc-supervision-label {
+  color: #647d94;
+  font-size: 0.57rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.gc-supervision-value {
+  color: #d9e8f3;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  font-size: 0.77rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.gc-supervision-value.is-good {
+  color: #43d69e;
+}
+
+.gc-supervision-value.is-warning {
+  color: #f4c95d;
+}
+
+.gc-supervision-value.is-critical {
+  color: #ff6b7a;
+}
+
+.gc-supervision-value.is-neutral {
+  color: #8fa4ba;
+}
+
+.gc-refresh-button--compact {
+  min-height: 48px;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 1250px) {
+  .gc-topbar--enterprise {
+    position: static;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .gc-supervision-strip {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .gc-supervision-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .gc-supervision-item {
+    min-width: 0;
+  }
+
+  .gc-refresh-button--compact {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .gc-supervision-strip {
+    grid-template-columns: 1fr;
+  }
+}
