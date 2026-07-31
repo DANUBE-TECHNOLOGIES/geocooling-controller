@@ -1,25 +1,24 @@
 import type { GeoCoolingSnapshot } from "@/types/geocooling";
 
 import {
-  EquipmentCard,
-  FlowArrow,
   FlowState,
   TemperatureBadge,
 } from "./system";
 
-function temp(value: number | null): string {
-  return value === null
-    ? "--.- °C"
-    : `${value.toFixed(1)} °C`;
-}
+import ScadaHydraulicDiagram from "./system/ScadaHydraulicDiagram";
 
 export function SystemFlow({
   snapshot,
 }: {
   snapshot: GeoCoolingSnapshot;
 }) {
+  const circuitActive =
+    snapshot.pumpRunning &&
+    snapshot.valveOpen &&
+    snapshot.safetySafe !== false;
+
   return (
-    <article className="panel">
+    <article className="panel system-flow-panel">
 
       <div className="panel-head">
 
@@ -30,57 +29,45 @@ export function SystemFlow({
           </h2>
 
           <div className="panel-kicker">
-            Circuit de refroidissement
+            Supervision temps réel du circuit GeoCooling
           </div>
 
         </div>
 
-      </div>
-
-      <div className="hydraulic-flow">
-
-        <EquipmentCard
-          title="💧 NAPPE"
-          value={temp(snapshot.sourceInTemperature)}
-        />
-
-        <FlowArrow />
-
-        <EquipmentCard
-          title="♨ ÉCHANGEUR"
-          value={temp(snapshot.sourceOutTemperature)}
-        />
-
-        <FlowArrow />
-
-        <EquipmentCard
-          title="⚙ POMPE"
-          value={
-            snapshot.pumpRunning
-              ? "EN SERVICE"
-              : "ARRÊT"
+        <div
+          className={
+            circuitActive
+              ? "system-flow-status system-flow-status-active"
+              : "system-flow-status system-flow-status-idle"
           }
-        />
+        >
+          <span className="system-flow-status-dot" />
 
-        <FlowArrow />
-
-        <EquipmentCard
-          title="🏠 PLANCHER"
-          value={temp(snapshot.supplyTemperature)}
-        />
+          {circuitActive
+            ? "CIRCUIT ACTIF"
+            : "CIRCUIT À L’ARRÊT"}
+        </div>
 
       </div>
+
+      <ScadaHydraulicDiagram
+        snapshot={snapshot}
+      />
 
       <div className="flow-states">
 
         <FlowState
           label="Pompe"
           value={snapshot.pumpRunning}
+          activeLabel="MARCHE"
+          inactiveLabel="ARRÊT"
         />
 
         <FlowState
           label="Vanne"
           value={snapshot.valveOpen}
+          activeLabel="OUVERTE"
+          inactiveLabel="FERMÉE"
         />
 
         <FlowState
@@ -88,6 +75,15 @@ export function SystemFlow({
           value={snapshot.safetySafe}
           activeLabel="OK"
           inactiveLabel="ALARME"
+          unknownLabel="INCONNUE"
+        />
+
+        <FlowState
+          label="Contrôleur"
+          value={snapshot.deviceReady}
+          activeLabel="PRÊT"
+          inactiveLabel="NON PRÊT"
+          unknownLabel="INCONNU"
         />
 
       </div>
@@ -95,23 +91,23 @@ export function SystemFlow({
       <div className="flow-temps">
 
         <TemperatureBadge
-          label="Départ"
-          value={snapshot.supplyTemperature}
-        />
-
-        <TemperatureBadge
-          label="Retour"
-          value={snapshot.returnTemperature}
-        />
-
-        <TemperatureBadge
-          label="Source"
+          label="Entrée source"
           value={snapshot.sourceInTemperature}
         />
 
         <TemperatureBadge
-          label="Rejet"
+          label="Sortie source"
           value={snapshot.sourceOutTemperature}
+        />
+
+        <TemperatureBadge
+          label="Départ plancher"
+          value={snapshot.supplyTemperature}
+        />
+
+        <TemperatureBadge
+          label="Retour plancher"
+          value={snapshot.returnTemperature}
         />
 
       </div>
