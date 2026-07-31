@@ -316,3 +316,256 @@ a { color: inherit; text-decoration: none; }
   }
 }
 /* FIN E2.1 — Runtime temps réel */
+
+/* ===========================================================
+   E4.1 - ENTERPRISE THEME FOUNDATION
+   =========================================================== */
+
+:root{
+
+  --gc-panel:#101b28;
+  --gc-panel2:#152434;
+  --gc-border:#2d4255;
+
+  --gc-green:#1dd75b;
+  --gc-blue:#3da5ff;
+  --gc-orange:#ffb347;
+  --gc-red:#ff6464;
+
+  --gc-glow:0 0 20px rgba(61,165,255,.18);
+
+}
+
+/* ----------------------------------------------------------- */
+
+body{
+
+    background:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px),
+        radial-gradient(circle at top right,
+            rgba(38,110,180,.18),
+            transparent 35%),
+        #071019;
+
+    background-size:
+        40px 40px,
+        40px 40px,
+        auto,
+        auto;
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-card{
+
+    position:relative;
+
+    overflow:hidden;
+
+    transition:
+        transform .22s,
+        box-shadow .22s,
+        border-color .22s;
+
+    border:1px solid var(--gc-border);
+
+    background:
+
+        linear-gradient(
+            180deg,
+            rgba(26,39,53,.96),
+            rgba(15,24,35,.96)
+        );
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-card::before{
+
+    content:"";
+
+    position:absolute;
+
+    left:0;
+    top:0;
+    right:0;
+
+    height:4px;
+
+    background:var(--gc-blue);
+
+    opacity:.75;
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-on::before{
+    background:var(--gc-green);
+}
+
+.metric-warning::before{
+    background:var(--gc-orange);
+}
+
+.metric-off::before{
+    background:var(--gc-red);
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-card:hover{
+
+    transform:translateY(-4px);
+
+    border-color:#4d6982;
+
+    box-shadow:
+
+        0 20px 45px rgba(0,0,0,.35),
+
+        var(--gc-glow);
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-icon-wrapper{
+
+    width:56px;
+
+    height:56px;
+
+    border-radius:50%;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    background:
+
+        radial-gradient(circle,
+            rgba(61,165,255,.22),
+            rgba(61,165,255,.05));
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-icon{
+
+    font-size:24px;
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-value{
+
+    font-size:38px;
+
+    font-weight:800;
+
+    letter-spacing:-0.05em;
+
+    line-height:1;
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-status{
+
+    margin-left:auto;
+
+    padding:5px 10px;
+
+    border-radius:999px;
+
+    font-size:10px;
+
+    font-weight:700;
+
+    letter-spacing:.08em;
+
+}
+
+.metric-status.on{
+
+    color:#04150a;
+
+    background:var(--gc-green);
+
+}
+
+.metric-status.warning{
+
+    color:#3a2500;
+
+    background:var(--gc-orange);
+
+}
+
+.metric-status.off{
+
+    color:white;
+
+    background:var(--gc-red);
+
+}
+
+/* ----------------------------------------------------------- */
+
+.metric-foot{
+
+    border-top:1px solid rgba(255,255,255,.05);
+
+    padding-top:14px;
+
+    margin-top:18px;
+
+}
+
+/* ----------------------------------------------------------- */
+
+.state-dot{
+
+    animation:gcPulse 2.2s infinite;
+
+}
+
+@keyframes gcPulse{
+
+0%{
+
+transform:scale(1);
+
+opacity:1;
+
+}
+
+50%{
+
+transform:scale(1.35);
+
+opacity:.55;
+
+}
+
+100%{
+
+transform:scale(1);
+
+opacity:1;
+
+}
+
+}
+
+/* =========================================================== */
+
