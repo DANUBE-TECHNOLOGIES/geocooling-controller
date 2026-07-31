@@ -1020,3 +1020,148 @@ opacity:1;
 
 /* =========================================================== */
 
+
+/* ===========================================================
+   E6.1 - SYNOPTIQUE SVG SCADA
+   =========================================================== */
+
+.scada-diagram-shell {
+  width: 100%;
+  overflow-x: auto;
+  padding: 4px 0 2px;
+}
+
+.scada-diagram {
+  width: 100%;
+  min-width: 760px;
+  height: auto;
+  display: block;
+}
+
+.scada-background {
+  fill: rgba(7, 16, 25, 0.52);
+  stroke: rgba(172, 203, 222, 0.12);
+  stroke-width: 2;
+}
+
+.scada-unit {
+  fill: rgba(18, 33, 48, 0.96);
+  stroke: rgba(172, 203, 222, 0.2);
+  stroke-width: 2;
+}
+
+.scada-unit-title {
+  fill: #91a7b7;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.scada-unit-value {
+  fill: #f5f9fb;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.scada-pipe {
+  fill: none;
+  stroke: rgba(82, 112, 132, 0.6);
+  stroke-width: 8;
+  stroke-linecap: round;
+}
+
+.scada-pipe-active {
+  stroke: url("#pipeGradient");
+  stroke-dasharray: 18 12;
+  filter: url("#glow");
+  animation: scadaFlow 1.1s linear infinite;
+}
+
+@keyframes scadaFlow {
+  to {
+    stroke-dashoffset: -30;
+  }
+}
+
+.scada-source-icon {
+  fill: rgba(61, 165, 255, 0.1);
+  stroke: #3da5ff;
+  stroke-width: 2;
+}
+
+.scada-water-drop {
+  fill: #3da5ff;
+}
+
+.scada-exchanger {
+  fill: rgba(255, 179, 71, 0.08);
+  stroke: #ffb347;
+  stroke-width: 2;
+}
+
+.scada-exchanger-lines {
+  fill: none;
+  stroke: #ffb347;
+  stroke-width: 3;
+}
+
+.scada-pump {
+  fill: rgba(100, 120, 136, 0.1);
+  stroke: #647888;
+  stroke-width: 3;
+}
+
+.scada-pump-running {
+  fill: rgba(29, 215, 91, 0.1);
+  stroke: #1dd75b;
+  filter: url("#glow");
+}
+
+.scada-pump-blade {
+  fill: #d9fbff;
+  transform-origin: 60px 50px;
+}
+
+.scada-pump-running + .scada-pump-blade {
+  animation: scadaPumpRotate 1.2s linear infinite;
+}
+
+@keyframes scadaPumpRotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.scada-floor {
+  fill: rgba(66, 211, 181, 0.08);
+  stroke: #42d3b5;
+  stroke-width: 2;
+}
+
+.scada-floor-lines {
+  fill: none;
+  stroke: #42d3b5;
+  stroke-width: 3;
+}
+
+.scada-status-box {
+  fill: rgba(100, 120, 136, 0.13);
+  stroke: #647888;
+  stroke-width: 2;
+}
+
+.scada-status-ok {
+  fill: rgba(29, 215, 91, 0.1);
+  stroke: #1dd75b;
+  filter: url("#glow");
+}
+
+.scada-status-text {
+  fill: #f5f9fb;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+}
+
+/* FIN E6.1 */
+
