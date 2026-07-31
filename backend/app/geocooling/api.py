@@ -4142,3 +4142,58 @@ def get_industrial_platform_field_certification_history(limit: int = Query(defau
 @router.get("/geocooling/industrial-platform/digital-twin")
 def get_geocooling_industrial_platform_digital_twin():
     return industrial_platform.digital_twin.status()
+
+from pydantic import BaseModel
+
+
+class BrainSimulationRequest(BaseModel):
+    indoor_temperature_c: float
+    indoor_humidity_percent: float
+
+    outdoor_temperature_c: float | None = None
+
+    source_inlet_temperature_c: float | None = None
+
+    source_outlet_temperature_c: float | None = None
+
+    supply_temperature_c: float | None = None
+
+    return_temperature_c: float | None = None
+
+    flow_rate_l_min: float | None = None
+
+    pump_running: bool = False
+
+    valve_open: bool = False
+
+
+@router.post(
+    "/geocooling/simulation/evaluate",
+    tags=["GeoCooling"],
+)
+def evaluate_simulation(
+    payload: BrainSimulationRequest,
+):
+    latest = payload.model_dump()
+
+    thermal = {
+        "latest": latest,
+    }
+
+    safety = {
+        "safe": True,
+    }
+
+    device = {
+        "ready": True,
+    }
+
+    decision = controller.brain._c0123r4_original_evaluate(
+        state=controller.state.value,
+        thermal=thermal,
+        safety=safety,
+        device=device,
+    )
+
+    return decision.as_dict()
+
