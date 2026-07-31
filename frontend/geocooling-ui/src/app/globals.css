@@ -1256,3 +1256,29 @@ opacity:1;
 
 /* FIN E6.2 */
 
+
+/* ===========================================================
+   E7.1 - Animation avancée du fluide
+   =========================================================== */
+
+.scada-pipe-flow {
+  stroke-dasharray: 14 8;
+  animation:
+    scadaFlow 0.9s linear infinite,
+    scadaGlow 2s ease-in-out infinite;
+}
+
+@keyframes scadaGlow {
+
+  0%,
+  100% {
+    filter: drop-shadow(0 0 2px rgba(66,211,181,.30));
+  }
+
+  50% {
+    filter:
+      drop-shadow(0 0 8px rgba(66,211,181,.70))
+      drop-shadow(0 0 16px rgba(66,211,181,.40));
+  }
+}
+

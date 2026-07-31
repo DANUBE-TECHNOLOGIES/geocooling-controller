@@ -71,25 +71,19 @@ export default function ScadaHydraulicDiagram({
 
         <path
           d="M160 205 H295"
-          className={`scada-pipe ${
-            flowActive ? "scada-pipe-active" : ""
-          }`}
+          className={`scada-pipe ${flowActive ? "scada-pipe-active scada-pipe-flow" : ""}`}
           markerEnd="url(#arrowHead)"
         />
 
         <path
           d="M425 205 H560"
-          className={`scada-pipe ${
-            flowActive ? "scada-pipe-active" : ""
-          }`}
+          className={`scada-pipe ${flowActive ? "scada-pipe-active scada-pipe-flow" : ""}`}
           markerEnd="url(#arrowHead)"
         />
 
         <path
           d="M690 205 H825"
-          className={`scada-pipe ${
-            flowActive ? "scada-pipe-active" : ""
-          }`}
+          className={`scada-pipe ${flowActive ? "scada-pipe-active scada-pipe-flow" : ""}`}
           markerEnd="url(#arrowHead)"
         />
 
