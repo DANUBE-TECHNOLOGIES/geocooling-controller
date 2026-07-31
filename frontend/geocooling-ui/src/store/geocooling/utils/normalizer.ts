@@ -1,89 +1,133 @@
 import type {
-    GeoCoolingMode,
-    GeoCoolingSnapshot
+  BrainDecision,
+  GeoCoolingApiPayload,
+  GeoCoolingMode,
+  GeoCoolingSnapshot,
 } from "@/types/geocooling";
 
-function normalizeMode(value: unknown): GeoCoolingMode {
-
-    switch (String(value).toLowerCase()) {
-
-        case "manual":
-            return "manual";
-
-        case "automatic":
-            return "automatic";
-
-        case "simulation":
-            return "simulation";
-
-        default:
-            return "unknown";
-    }
-
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : null;
 }
 
-export function normalizeSnapshot(raw: any): GeoCoolingSnapshot {
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
 
-    return {
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
 
-        available: Boolean(raw?.available),
+function normalizeMode(value: unknown): GeoCoolingMode {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "manual":
+    case "manuel":
+      return "manual";
 
-        generatedAt:
-            raw?.generatedAt ??
-            null,
+    case "automatic":
+    case "auto":
+    case "automatique":
+      return "automatic";
 
-        indoorTemperature:
-            raw?.indoorTemperature ??
-            null,
+    case "simulation":
+      return "simulation";
 
-        humidity:
-            raw?.humidity ??
-            null,
+    default:
+      return "unknown";
+  }
+}
 
-        sourceInTemperature:
-            raw?.sourceInTemperature ??
-            null,
+function normalizeDecision(raw: GeoCoolingApiPayload): BrainDecision {
+  const decisionCode =
+    asString(raw.brain_decision) ??
+    asString(raw.decision);
 
-        sourceOutTemperature:
-            raw?.sourceOutTemperature ??
-            null,
+  const explanation =
+    asString(raw.brain_reason) ??
+    asString(raw.last_reason);
 
-        supplyTemperature:
-            raw?.supplyTemperature ??
-            null,
+  const summary =
+    explanation ??
+    decisionCode ??
+    "Aucune décision disponible";
 
-        returnTemperature:
-            raw?.returnTemperature ??
-            null,
+  const reasons = explanation
+    ? explanation
+        .split(";")
+        .map((reason) => reason.trim())
+        .filter(Boolean)
+    : [];
 
-        pumpRunning:
-            Boolean(raw?.pumpRunning),
+  return {
+    summary,
+    confidence:
+      asNumber(raw.brain_confidence) ??
+      asNumber(raw.confidence) ??
+      0,
+    reasons,
+  };
+}
 
-        valveOpen:
-            Boolean(raw?.valveOpen),
+export function normalizeSnapshot(input: unknown): GeoCoolingSnapshot {
+  const raw: GeoCoolingApiPayload =
+    typeof input === "object" && input !== null
+      ? (input as GeoCoolingApiPayload)
+      : {};
 
-        mode:
-            normalizeMode(raw?.mode),
+  return {
+    available: Boolean(raw.available),
 
-        safetySafe:
-            raw?.safetySafe ??
-            null,
+    generatedAt:
+      asString(raw.generated_at) ??
+      asString(raw.generatedAt),
 
-        deviceReady:
-            raw?.deviceReady ??
-            null,
+    indoorTemperature:
+      asNumber(raw.indoor_temperature_c) ??
+      asNumber(raw.indoorTemperature),
 
-        decision:
-            raw?.decision ?? {
+    humidity:
+      asNumber(raw.indoor_humidity_percent) ??
+      asNumber(raw.humidity),
 
-                summary: "",
+    sourceInTemperature:
+      asNumber(raw.source_inlet_temperature_c) ??
+      asNumber(raw.sourceInTemperature),
 
-                confidence: 0,
+    sourceOutTemperature:
+      asNumber(raw.source_outlet_temperature_c) ??
+      asNumber(raw.sourceOutTemperature),
 
-                reasons: []
+    supplyTemperature:
+      asNumber(raw.floor_supply_temperature_c) ??
+      asNumber(raw.supplyTemperature),
 
-            }
+    returnTemperature:
+      asNumber(raw.floor_return_temperature_c) ??
+      asNumber(raw.returnTemperature),
 
-    };
+    pumpRunning:
+      asBoolean(raw.pump_running) ??
+      asBoolean(raw.pumpRunning) ??
+      false,
 
+    valveOpen:
+      asBoolean(raw.valve_open) ??
+      asBoolean(raw.valveOpen) ??
+      false,
+
+    mode: normalizeMode(raw.mode),
+
+    safetySafe:
+      asBoolean(raw.safety_safe) ??
+      asBoolean(raw.safetySafe),
+
+    deviceReady:
+      asBoolean(raw.device_ready) ??
+      asBoolean(raw.deviceReady),
+
+    decision: normalizeDecision(raw),
+  };
 }
