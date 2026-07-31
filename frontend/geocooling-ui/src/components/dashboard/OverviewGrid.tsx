@@ -45,8 +45,8 @@ export function OverviewGrid({
         label="Source"
         value={format(snapshot.sourceInTemperature)}
         unit="°C"
-        foot="Nappe géothermique"
-        trend="Source"
+        foot="Nappe"
+        trend="Entrée"
       />
 
       <MetricCard
@@ -54,7 +54,7 @@ export function OverviewGrid({
         label="Départ"
         value={format(snapshot.supplyTemperature)}
         unit="°C"
-        foot="Circuit plancher"
+        foot="Plancher"
         trend="Hydraulique"
       />
 
@@ -72,43 +72,41 @@ export function OverviewGrid({
         icon="⚙️"
         label="Pompe"
         value={snapshot.pumpRunning ? "ACTIVE" : "STOP"}
-        foot={
-          snapshot.pumpRunning
-            ? "Circulation active"
-            : "Arrêt"
-        }
+        foot="Circulateur"
         trend="Hydraulique"
-        state={
-          snapshot.pumpRunning
-            ? "on"
-            : "off"
-        }
+        state={snapshot.pumpRunning ? "on" : "off"}
       />
 
       <MetricCard
         icon="🚰"
         label="Vanne"
-        value={
-          snapshot.valveOpen
-            ? "OUVERTE"
-            : "FERMÉE"
-        }
+        value={snapshot.valveOpen ? "OUVERTE" : "FERMÉE"}
         foot="Circuit primaire"
         trend="Commande"
-        state={
-          snapshot.valveOpen
-            ? "on"
-            : "off"
-        }
+        state={snapshot.valveOpen ? "on" : "off"}
       />
 
       <MetricCard
-        icon="🧠"
-        label="Brain"
-        value={snapshot.decision.summary}
-        foot={snapshot.decision.reasons.join(" • ")}
-        trend={`${Math.round(snapshot.decision.confidence)} %`}
-        state="warning"
+        icon="🛡️"
+        label="Sécurité"
+        value={
+          snapshot.safetySafe === null
+            ? "--"
+            : snapshot.safetySafe
+              ? "OK"
+              : "ALARME"
+        }
+        foot={
+          snapshot.deviceReady
+            ? "Contrôleur prêt"
+            : "Contrôleur non prêt"
+        }
+        trend={snapshot.mode.toUpperCase()}
+        state={
+          snapshot.safetySafe === false
+            ? "off"
+            : "on"
+        }
       />
 
     </section>
