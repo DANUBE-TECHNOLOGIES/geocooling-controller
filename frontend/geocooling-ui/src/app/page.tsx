@@ -3,10 +3,10 @@
 import { BrainCard } from "@/components/dashboard/BrainCard";
 import { ControllerStatusCard } from "@/components/dashboard/ControllerStatusCard";
 import { HydraulicCard } from "@/components/dashboard/HydraulicCard";
+import { MissionHeader } from "@/components/dashboard/MissionHeader";
 import { RuntimeCard } from "@/components/dashboard/RuntimeCard";
 import { ThermalCard } from "@/components/dashboard/ThermalCard";
 import { AppShell } from "@/components/layout/AppShell";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useGeoCooling } from "@/hooks/useGeoCooling";
 
 export default function Home() {
@@ -35,52 +35,10 @@ export default function Home() {
         void refresh();
       }}
     >
-      <section className="gc-hero">
-        <div>
-          <p className="gc-hero__eyebrow">
-            SUPERVISION TEMPS RÉEL
-          </p>
-
-          <h2 className="gc-hero__title">
-            Pilotage intelligent du rafraîchissement géothermique
-          </h2>
-
-          <p className="gc-hero__description">
-            Surveillance du bâtiment, du circuit hydraulique et des décisions
-            du moteur GeoCooling Brain.
-          </p>
-        </div>
-
-        <div className="gc-hero__badges">
-          <StatusBadge
-            label={snapshot?.pumpRunning ? "POMPE ACTIVE" : "POMPE ARRÊTÉE"}
-            tone={snapshot?.pumpRunning ? "success" : "neutral"}
-            pulse={snapshot?.pumpRunning === true}
-          />
-
-          <StatusBadge
-            label={snapshot?.valveOpen ? "VANNE OUVERTE" : "VANNE FERMÉE"}
-            tone={snapshot?.valveOpen ? "success" : "neutral"}
-          />
-
-          <StatusBadge
-            label={
-              snapshot?.safetySafe === true
-                ? "SÉCURITÉ OK"
-                : snapshot?.safetySafe === false
-                  ? "ALERTE SÉCURITÉ"
-                  : "SÉCURITÉ INCONNUE"
-            }
-            tone={
-              snapshot?.safetySafe === true
-                ? "success"
-                : snapshot?.safetySafe === false
-                  ? "danger"
-                  : "neutral"
-            }
-          />
-        </div>
-      </section>
+      <MissionHeader
+        snapshot={snapshot}
+        connected={connected}
+      />
 
       {loading && !snapshot ? (
         <section className="gc-loading-state">
