@@ -10009,3 +10009,455 @@ button {
     transition: none;
   }
 }
+
+/* =========================================================
+   UI009.1C — IMPORT & COMPARAISON HISTORIAN
+========================================================= */
+
+.gc-historian-import-input {
+  display: none;
+}
+
+.gc-historian-import-panel {
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 1fr)
+    auto
+    minmax(280px, 1.2fr);
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border: 1px solid rgba(84, 216, 255, 0.12);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(84, 216, 255, 0.035),
+      rgba(5, 16, 28, 0.9)
+    );
+}
+
+.gc-historian-import-panel
+  > div:first-child
+  > span {
+  display: block;
+  color: #54d8ff;
+  font-size: 0.48rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.gc-historian-import-panel
+  > div:first-child
+  > strong {
+  display: block;
+  margin-top: 5px;
+  color: #c7d9e5;
+  font-size: 0.68rem;
+}
+
+.gc-historian-import-panel
+  > div:first-child
+  > small {
+  display: block;
+  margin-top: 4px;
+  color: #657e93;
+  font-size: 0.52rem;
+}
+
+.gc-historian-import-mode {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 9px;
+  background: rgba(3, 12, 21, 0.55);
+}
+
+.gc-historian-import-mode button {
+  min-height: 33px;
+  padding: 7px 11px;
+  border: 0;
+  border-right: 1px solid rgba(137, 177, 210, 0.08);
+  color: #7890a5;
+  background: transparent;
+  font-size: 0.52rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.gc-historian-import-mode button:last-child {
+  border-right: 0;
+}
+
+.gc-historian-import-mode button.is-active {
+  color: #54d8ff;
+  background: rgba(84, 216, 255, 0.09);
+}
+
+.gc-historian-import-status,
+.gc-historian-import-help {
+  display: grid;
+  grid-template-columns:
+    24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(137, 177, 210, 0.08);
+  border-radius: 10px;
+  background: rgba(137, 177, 210, 0.018);
+}
+
+.gc-historian-import-status > span,
+.gc-historian-import-help > span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.gc-historian-import-status > strong,
+.gc-historian-import-help > strong {
+  color: #9eb4c4;
+  font-size: 0.55rem;
+  line-height: 1.45;
+}
+
+.gc-historian-import-status.is-success {
+  border-color: rgba(67, 214, 158, 0.2);
+}
+
+.gc-historian-import-status.is-success > span {
+  color: #43d69e;
+  background: rgba(67, 214, 158, 0.09);
+}
+
+.gc-historian-import-status.is-warning {
+  border-color: rgba(244, 201, 93, 0.2);
+}
+
+.gc-historian-import-status.is-warning > span {
+  color: #f4c95d;
+  background: rgba(244, 201, 93, 0.09);
+}
+
+.gc-historian-import-status.is-danger {
+  border-color: rgba(255, 107, 122, 0.22);
+}
+
+.gc-historian-import-status.is-danger > span {
+  color: #ff6b7a;
+  background: rgba(255, 107, 122, 0.09);
+}
+
+.gc-historian-import-help > span {
+  color: #54d8ff;
+  background: rgba(84, 216, 255, 0.08);
+}
+
+.gc-historian-comparison {
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid rgba(137, 177, 210, 0.11);
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(12, 29, 47, 0.94),
+      rgba(5, 16, 28, 0.98)
+    );
+}
+
+.gc-historian-comparison > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 13px;
+}
+
+.gc-historian-comparison h3 {
+  margin: 0;
+  color: #dcebf5;
+  font-size: 0.84rem;
+}
+
+.gc-historian-comparison
+  > header
+  > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.gc-historian-comparison
+  > header
+  > div:last-child
+  > span {
+  color: #7890a5;
+  font-size: 0.53rem;
+}
+
+.gc-historian-comparison
+  > header button {
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid rgba(84, 216, 255, 0.16);
+  border-radius: 9px;
+  color: #9fdcf0;
+  background: rgba(84, 216, 255, 0.045);
+  font-size: 0.52rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.gc-historian-comparison
+  > header button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.gc-historian-comparison__grid {
+  display: grid;
+  grid-template-columns:
+    repeat(5, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.gc-historian-comparison__grid > article {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(137, 177, 210, 0.08);
+  border-radius: 11px;
+  background: rgba(137, 177, 210, 0.015);
+}
+
+.gc-historian-comparison__grid
+  > article
+  > span {
+  display: block;
+  min-height: 23px;
+  color: #60798e;
+  font-size: 0.47rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+}
+
+.gc-historian-comparison__grid
+  > article
+  > div {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 9px 0;
+}
+
+.gc-historian-comparison__grid section {
+  min-width: 0;
+  padding: 7px;
+  border-radius: 8px;
+  background: rgba(137, 177, 210, 0.025);
+}
+
+.gc-historian-comparison__grid section small {
+  display: block;
+  color: #526b80;
+  font-size: 0.42rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+}
+
+.gc-historian-comparison__grid section strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 5px;
+  color: #bdcfdb;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 0.53rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-historian-comparison__grid footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(137, 177, 210, 0.07);
+}
+
+.gc-historian-comparison__grid footer > span {
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.gc-historian-comparison__grid footer > strong {
+  overflow: hidden;
+  font-size: 0.54rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-historian-comparison__grid footer.is-positive {
+  color: #43d69e;
+}
+
+.gc-historian-comparison__grid footer.is-negative {
+  color: #ff6b7a;
+}
+
+.gc-historian-comparison__grid footer.is-neutral {
+  color: #8da3b6;
+}
+
+.gc-historian-comparison__empty {
+  display: grid;
+  grid-template-columns:
+    30px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 85px;
+  padding: 14px;
+  border: 1px dashed rgba(137, 177, 210, 0.13);
+  border-radius: 11px;
+}
+
+.gc-historian-comparison__empty > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  color: #54d8ff;
+  background: rgba(84, 216, 255, 0.08);
+  font-weight: 900;
+}
+
+.gc-historian-comparison__empty strong {
+  display: block;
+  color: #b9ccd9;
+  font-size: 0.64rem;
+}
+
+.gc-historian-comparison__empty small {
+  display: block;
+  margin-top: 4px;
+  color: #6e879d;
+  font-size: 0.53rem;
+}
+
+.gc-historian-comparison__periods {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.gc-historian-comparison__periods > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(137, 177, 210, 0.07);
+  border-radius: 9px;
+  background: rgba(137, 177, 210, 0.014);
+}
+
+.gc-historian-comparison__periods span {
+  display: block;
+  color: #60798e;
+  font-size: 0.45rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+}
+
+.gc-historian-comparison__periods strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 5px;
+  color: #aebfcb;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 0.51rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .gc-historian-import-panel {
+    grid-template-columns:
+      minmax(220px, 1fr)
+      auto;
+  }
+
+  .gc-historian-import-status,
+  .gc-historian-import-help {
+    grid-column: 1 / -1;
+  }
+
+  .gc-historian-comparison__grid {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .gc-historian-import-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .gc-historian-import-status,
+  .gc-historian-import-help {
+    grid-column: auto;
+  }
+
+  .gc-historian-import-mode {
+    width: 100%;
+  }
+
+  .gc-historian-import-mode button {
+    flex: 1;
+  }
+
+  .gc-historian-comparison > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .gc-historian-comparison
+    > header
+    > div:last-child {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .gc-historian-comparison__grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 500px) {
+  .gc-historian-comparison__grid,
+  .gc-historian-comparison__periods {
+    grid-template-columns: 1fr;
+  }
+
+  .gc-historian-comparison
+    > header
+    > div:last-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

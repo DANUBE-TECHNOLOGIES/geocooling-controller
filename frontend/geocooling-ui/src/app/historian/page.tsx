@@ -58,6 +58,27 @@ type Statistics = {
   standardDeviation: number | null;
 };
 
+type ImportMode =
+  | "merge"
+  | "replace";
+
+type ImportStatus = {
+  tone:
+    | "success"
+    | "warning"
+    | "danger";
+  message: string;
+};
+
+type ComparisonMetric = {
+  label: string;
+  unit: string;
+  current: number | null;
+  previous: number | null;
+  difference: number | null;
+  inversePositive?: boolean;
+};
+
 const STORAGE_KEY =
   "geocooling-ui-historian-enterprise-v2";
 
@@ -662,6 +683,430 @@ function pointDelta(
     : null;
 }
 
+function parseNullableNumber(
+  value: unknown,
+): number | null {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value)
+  ) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized =
+    value
+      .trim()
+      .replace(",", ".");
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed =
+    Number(normalized);
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : null;
+}
+
+function parseNullableBoolean(
+  value: unknown,
+): boolean | null {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  const normalized =
+    String(value)
+      .trim()
+      .toLowerCase();
+
+  if (
+    [
+      "true",
+      "1",
+      "on",
+      "yes",
+      "oui",
+      "active",
+      "actif",
+      "ouverte",
+      "open",
+      "ok",
+    ].includes(normalized)
+  ) {
+    return true;
+  }
+
+  if (
+    [
+      "false",
+      "0",
+      "off",
+      "no",
+      "non",
+      "inactive",
+      "inactif",
+      "fermee",
+      "fermée",
+      "closed",
+      "alarme",
+    ].includes(normalized)
+  ) {
+    return false;
+  }
+
+  return null;
+}
+
+function normalizeImportedPoint(
+  value: unknown,
+): HistoryPoint | null {
+  if (
+    typeof value !== "object" ||
+    value === null
+  ) {
+    return null;
+  }
+
+  const source =
+    value as Record<string, unknown>;
+
+  const timestampValue =
+    source.timestamp ??
+    source.generatedAt ??
+    source.generated_at ??
+    source.date;
+
+  if (
+    typeof timestampValue !== "string"
+  ) {
+    return null;
+  }
+
+  const timestamp =
+    new Date(timestampValue);
+
+  if (
+    Number.isNaN(
+      timestamp.getTime(),
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    timestamp:
+      timestamp.toISOString(),
+
+    indoorTemperature:
+      parseNullableNumber(
+        source.indoorTemperature ??
+        source.indoor_temperature_c ??
+        source.indoor_temperature,
+      ),
+
+    humidity:
+      parseNullableNumber(
+        source.humidity ??
+        source.humidity_percent,
+      ),
+
+    sourceInTemperature:
+      parseNullableNumber(
+        source.sourceInTemperature ??
+        source.source_in_c ??
+        source.source_in_temperature,
+      ),
+
+    sourceOutTemperature:
+      parseNullableNumber(
+        source.sourceOutTemperature ??
+        source.source_out_c ??
+        source.source_out_temperature,
+      ),
+
+    supplyTemperature:
+      parseNullableNumber(
+        source.supplyTemperature ??
+        source.supply_c ??
+        source.supply_temperature,
+      ),
+
+    returnTemperature:
+      parseNullableNumber(
+        source.returnTemperature ??
+        source.return_c ??
+        source.return_temperature,
+      ),
+
+    pumpRunning:
+      parseNullableBoolean(
+        source.pumpRunning ??
+        source.pump_running,
+      ) ?? false,
+
+    valveOpen:
+      parseNullableBoolean(
+        source.valveOpen ??
+        source.valve_open,
+      ) ?? false,
+
+    safetySafe:
+      parseNullableBoolean(
+        source.safetySafe ??
+        source.safety_safe,
+      ),
+
+    deviceReady:
+      parseNullableBoolean(
+        source.deviceReady ??
+        source.device_ready,
+      ),
+
+    confidence:
+      parseNullableNumber(
+        source.confidence ??
+        source.brain_confidence,
+      ) ?? 0,
+  };
+}
+
+function splitCsvLine(
+  line: string,
+  separator: string,
+): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (
+    let index = 0;
+    index < line.length;
+    index += 1
+  ) {
+    const character =
+      line[index];
+
+    if (character === '"') {
+      const next =
+        line[index + 1];
+
+      if (
+        quoted &&
+        next === '"'
+      ) {
+        current += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+
+      continue;
+    }
+
+    if (
+      character === separator &&
+      !quoted
+    ) {
+      cells.push(
+        current.trim(),
+      );
+
+      current = "";
+      continue;
+    }
+
+    current += character;
+  }
+
+  cells.push(
+    current.trim(),
+  );
+
+  return cells;
+}
+
+function parseCsvHistory(
+  content: string,
+): HistoryPoint[] {
+  const lines =
+    content
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/)
+      .filter(
+        (line) =>
+          line.trim().length > 0,
+      );
+
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const separator =
+    lines[0].includes(";")
+      ? ";"
+      : ",";
+
+  const headers =
+    splitCsvLine(
+      lines[0],
+      separator,
+    ).map(
+      (header) =>
+        header
+          .trim()
+          .replace(/^"|"$/g, ""),
+    );
+
+  return lines
+    .slice(1)
+    .map((line) => {
+      const cells =
+        splitCsvLine(
+          line,
+          separator,
+        );
+
+      const record:
+        Record<string, unknown> = {};
+
+      headers.forEach(
+        (header, index) => {
+          record[header] =
+            cells[index] ?? "";
+        },
+      );
+
+      return normalizeImportedPoint(
+        record,
+      );
+    })
+    .filter(
+      (
+        point,
+      ): point is HistoryPoint =>
+        point !== null,
+    );
+}
+
+function parseJsonHistory(
+  content: string,
+): HistoryPoint[] {
+  const parsed =
+    JSON.parse(content);
+
+  const candidates =
+    Array.isArray(parsed)
+      ? parsed
+      : (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          Array.isArray(
+            (
+              parsed as {
+                points?: unknown;
+              }
+            ).points,
+          )
+        )
+        ? (
+            parsed as {
+              points: unknown[];
+            }
+          ).points
+        : [];
+
+  return candidates
+    .map(
+      normalizeImportedPoint,
+    )
+    .filter(
+      (
+        point,
+      ): point is HistoryPoint =>
+        point !== null,
+    );
+}
+
+function mergeHistoryPoints(
+  current: HistoryPoint[],
+  imported: HistoryPoint[],
+): HistoryPoint[] {
+  const pointsByTimestamp =
+    new Map<
+      string,
+      HistoryPoint
+    >();
+
+  current.forEach((point) => {
+    pointsByTimestamp.set(
+      point.timestamp,
+      point,
+    );
+  });
+
+  imported.forEach((point) => {
+    pointsByTimestamp.set(
+      point.timestamp,
+      point,
+    );
+  });
+
+  return Array.from(
+    pointsByTimestamp.values(),
+  )
+    .sort(
+      (left, right) =>
+        new Date(
+          left.timestamp,
+        ).getTime() -
+        new Date(
+          right.timestamp,
+        ).getTime(),
+    )
+    .slice(-MAX_POINTS);
+}
+
+function difference(
+  current: number | null,
+  previous: number | null,
+): number | null {
+  if (
+    current === null ||
+    previous === null
+  ) {
+    return null;
+  }
+
+  return current - previous;
+}
+
 function downloadTextFile(
   content: string,
   filename: string,
@@ -726,6 +1171,22 @@ export default function HistorianPage() {
 
   const [windowEndRatio, setWindowEndRatio] =
     useState(1);
+
+  const [importMode, setImportMode] =
+    useState<ImportMode>("merge");
+
+  const [importing, setImporting] =
+    useState(false);
+
+  const [importStatus, setImportStatus] =
+    useState<ImportStatus | null>(
+      null,
+    );
+
+  const importInputRef =
+    useRef<HTMLInputElement | null>(
+      null,
+    );
 
   const lastStoredAtRef =
     useRef<number>(0);
@@ -983,6 +1444,106 @@ export default function HistorianPage() {
       [visibleHistory],
     );
 
+  const previousHistory =
+    useMemo(() => {
+      if (
+        visibleHistory.length === 0 ||
+        periodHistory.length === 0
+      ) {
+        return [];
+      }
+
+      const visibleStart =
+        new Date(
+          visibleHistory[0].timestamp,
+        ).getTime();
+
+      const visibleEnd =
+        new Date(
+          visibleHistory.at(-1)!.timestamp,
+        ).getTime();
+
+      const duration =
+        Math.max(
+          SAMPLE_INTERVAL_MS,
+          visibleEnd - visibleStart,
+        );
+
+      const previousStart =
+        visibleStart - duration;
+
+      return periodHistory.filter(
+        (point) => {
+          const timestamp =
+            new Date(
+              point.timestamp,
+            ).getTime();
+
+          return (
+            timestamp >= previousStart &&
+            timestamp < visibleStart
+          );
+        },
+      );
+    }, [
+      visibleHistory,
+      periodHistory,
+    ]);
+
+  const previousFloorDeltaStatistics =
+    useMemo(
+      () =>
+        statistics(
+          previousHistory.map(
+            (point) =>
+              pointDelta(
+                point,
+                "floor",
+              ),
+          ),
+        ),
+      [previousHistory],
+    );
+
+  const previousSourceDeltaStatistics =
+    useMemo(
+      () =>
+        statistics(
+          previousHistory.map(
+            (point) =>
+              pointDelta(
+                point,
+                "source",
+              ),
+          ),
+        ),
+      [previousHistory],
+    );
+
+  const previousIndoorStatistics =
+    useMemo(
+      () =>
+        statistics(
+          previousHistory.map(
+            (point) =>
+              point.indoorTemperature,
+          ),
+        ),
+      [previousHistory],
+    );
+
+  const previousHumidityStatistics =
+    useMemo(
+      () =>
+        statistics(
+          previousHistory.map(
+            (point) =>
+              point.humidity,
+          ),
+        ),
+      [previousHistory],
+    );
+
   const humidityStatistics =
     useMemo(
       () =>
@@ -1024,6 +1585,103 @@ export default function HistorianPage() {
           ) *
             100,
         );
+
+  const previousActivePoints =
+    previousHistory.filter(
+      (point) =>
+        point.pumpRunning &&
+        point.valveOpen,
+    ).length;
+
+  const previousRuntimeRatio =
+    previousHistory.length === 0
+      ? null
+      : Math.round(
+          (
+            previousActivePoints /
+            previousHistory.length
+          ) *
+            100,
+        );
+
+  const currentIndoorStatistics =
+    statistics(
+      visibleHistory.map(
+        (point) =>
+          point.indoorTemperature,
+      ),
+    );
+
+  const comparisonMetrics:
+    ComparisonMetric[] = [
+      {
+        label:
+          "Température intérieure",
+        unit: "°C",
+        current:
+          currentIndoorStatistics.average,
+        previous:
+          previousIndoorStatistics.average,
+        difference: difference(
+          currentIndoorStatistics.average,
+          previousIndoorStatistics.average,
+        ),
+        inversePositive: true,
+      },
+      {
+        label: "Humidité",
+        unit: "%",
+        current:
+          humidityStatistics.average,
+        previous:
+          previousHumidityStatistics.average,
+        difference: difference(
+          humidityStatistics.average,
+          previousHumidityStatistics.average,
+        ),
+        inversePositive: true,
+      },
+      {
+        label: "ΔT source",
+        unit: "°C",
+        current:
+          sourceDeltaStatistics.average,
+        previous:
+          previousSourceDeltaStatistics.average,
+        difference: difference(
+          sourceDeltaStatistics.average,
+          previousSourceDeltaStatistics.average,
+        ),
+      },
+      {
+        label: "ΔT plancher",
+        unit: "°C",
+        current:
+          floorDeltaStatistics.average,
+        previous:
+          previousFloorDeltaStatistics.average,
+        difference: difference(
+          floorDeltaStatistics.average,
+          previousFloorDeltaStatistics.average,
+        ),
+      },
+      {
+        label: "Taux de marche",
+        unit: "%",
+        current:
+          visibleHistory.length > 0
+            ? runtimeRatio
+            : null,
+        previous:
+          previousRuntimeRatio,
+        difference: difference(
+          visibleHistory.length > 0
+            ? runtimeRatio
+            : null,
+          previousRuntimeRatio,
+        ),
+      },
+    ];
 
   const safetyEvents =
     visibleHistory.filter(
@@ -1342,6 +2000,172 @@ export default function HistorianPage() {
     }
   };
 
+  const handleImportFile =
+    async (
+      file:
+        File | null,
+    ) => {
+      if (!file) {
+        return;
+      }
+
+      setImporting(true);
+      setImportStatus(null);
+
+      try {
+        const content =
+          await file.text();
+
+        const extension =
+          file.name
+            .split(".")
+            .at(-1)
+            ?.toLowerCase();
+
+        const imported =
+          extension === "csv"
+            ? parseCsvHistory(
+                content,
+              )
+            : parseJsonHistory(
+                content,
+              );
+
+        if (
+          imported.length === 0
+        ) {
+          throw new Error(
+            "Aucun point exploitable n’a été trouvé.",
+          );
+        }
+
+        const updated =
+          importMode === "replace"
+            ? imported
+                .sort(
+                  (
+                    left,
+                    right,
+                  ) =>
+                    new Date(
+                      left.timestamp,
+                    ).getTime() -
+                    new Date(
+                      right.timestamp,
+                    ).getTime(),
+                )
+                .slice(
+                  -MAX_POINTS,
+                )
+            : mergeHistoryPoints(
+                history,
+                imported,
+              );
+
+        setHistory(updated);
+        saveHistory(updated);
+
+        const lastPoint =
+          updated.at(-1);
+
+        lastStoredAtRef.current =
+          lastPoint
+            ? new Date(
+                lastPoint.timestamp,
+              ).getTime()
+            : 0;
+
+        setWindowSizeRatio(1);
+        setWindowEndRatio(1);
+        setCursorIndex(null);
+
+        setImportStatus({
+          tone: "success",
+          message:
+            `${imported.length.toLocaleString(
+              "fr-FR",
+            )} point(s) importé(s). ` +
+            `${updated.length.toLocaleString(
+              "fr-FR",
+            )} point(s) en mémoire.`,
+        });
+      } catch (importError) {
+        setImportStatus({
+          tone: "danger",
+          message:
+            importError instanceof Error
+              ? importError.message
+              : "Import impossible.",
+        });
+      } finally {
+        setImporting(false);
+
+        if (
+          importInputRef.current
+        ) {
+          importInputRef.current.value =
+            "";
+        }
+      }
+    };
+
+  const exportComparison = () => {
+    if (
+      visibleHistory.length === 0
+    ) {
+      return;
+    }
+
+    const payload = {
+      exportedAt:
+        new Date().toISOString(),
+
+      currentPeriod: {
+        start:
+          visibleHistory[0]
+            ?.timestamp ?? null,
+
+        end:
+          visibleHistory.at(-1)
+            ?.timestamp ?? null,
+
+        pointCount:
+          visibleHistory.length,
+      },
+
+      previousPeriod: {
+        start:
+          previousHistory[0]
+            ?.timestamp ?? null,
+
+        end:
+          previousHistory.at(-1)
+            ?.timestamp ?? null,
+
+        pointCount:
+          previousHistory.length,
+      },
+
+      metrics:
+        comparisonMetrics,
+    };
+
+    downloadTextFile(
+      JSON.stringify(
+        payload,
+        null,
+        2,
+      ),
+      `geocooling-comparison-${new Date()
+        .toISOString()
+        .replaceAll(
+          ":",
+          "-",
+        )}.json`,
+      "application/json;charset=utf-8",
+    );
+  };
+
   const exportCsv = () => {
     if (
       visibleHistory.length === 0
@@ -1609,6 +2433,33 @@ export default function HistorianPage() {
             Export JSON
           </button>
 
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,.csv,application/json,text/csv"
+            className="gc-historian-import-input"
+            onChange={(event) => {
+              void handleImportFile(
+                event.target.files?.[
+                  0
+                ] ?? null,
+              );
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() =>
+              importInputRef.current
+                ?.click()
+            }
+            disabled={importing}
+          >
+            {importing
+              ? "Import…"
+              : "Importer"}
+          </button>
+
           <button
             type="button"
             className="is-danger"
@@ -1620,6 +2471,84 @@ export default function HistorianPage() {
             Effacer
           </button>
         </div>
+      </section>
+
+      <section className="gc-historian-import-panel">
+        <div>
+          <span>
+            RESTAURATION DE SESSION
+          </span>
+
+          <strong>
+            Import JSON ou CSV
+          </strong>
+
+          <small>
+            Les fichiers sont analysés localement
+            dans le navigateur.
+          </small>
+        </div>
+
+        <div className="gc-historian-import-mode">
+          <button
+            type="button"
+            className={
+              importMode === "merge"
+                ? "is-active"
+                : ""
+            }
+            onClick={() =>
+              setImportMode(
+                "merge",
+              )
+            }
+          >
+            Fusionner
+          </button>
+
+          <button
+            type="button"
+            className={
+              importMode === "replace"
+                ? "is-active"
+                : ""
+            }
+            onClick={() =>
+              setImportMode(
+                "replace",
+              )
+            }
+          >
+            Remplacer
+          </button>
+        </div>
+
+        {importStatus ? (
+          <div
+            className={`gc-historian-import-status is-${importStatus.tone}`}
+            role="status"
+          >
+            <span>
+              {importStatus.tone ===
+              "success"
+                ? "✓"
+                : "!"}
+            </span>
+
+            <strong>
+              {importStatus.message}
+            </strong>
+          </div>
+        ) : (
+          <div className="gc-historian-import-help">
+            <span>i</span>
+
+            <strong>
+              Fusionner conserve les points existants.
+              Remplacer efface la session courante.
+            </strong>
+          </div>
+        )}
       </section>
 
       <section className="gc-historian-enterprise-kpis">
@@ -2440,6 +3369,196 @@ export default function HistorianPage() {
             </article>
           </div>
         </aside>
+      </section>
+
+      <section className="gc-historian-comparison">
+        <header>
+          <div>
+            <p className="gc-page-header__eyebrow">
+              COMPARAISON TEMPORELLE
+            </p>
+
+            <h3>
+              Fenêtre visible / période précédente
+            </h3>
+          </div>
+
+          <div>
+            <span>
+              {previousHistory.length.toLocaleString(
+                "fr-FR",
+              )}{" "}
+              points de référence
+            </span>
+
+            <button
+              type="button"
+              onClick={exportComparison}
+              disabled={
+                previousHistory.length === 0
+              }
+            >
+              Exporter le rapport
+            </button>
+          </div>
+        </header>
+
+        {previousHistory.length === 0 ? (
+          <div className="gc-historian-comparison__empty">
+            <span>i</span>
+
+            <div>
+              <strong>
+                Comparaison indisponible
+              </strong>
+
+              <small>
+                Il n’existe pas encore suffisamment
+                de données avant la fenêtre actuelle.
+              </small>
+            </div>
+          </div>
+        ) : (
+          <div className="gc-historian-comparison__grid">
+            {comparisonMetrics.map(
+              (metric) => {
+                const differenceValue =
+                  metric.difference;
+
+                const positive =
+                  differenceValue !== null &&
+                  (
+                    metric.inversePositive
+                      ? differenceValue < 0
+                      : differenceValue > 0
+                  );
+
+                const negative =
+                  differenceValue !== null &&
+                  (
+                    metric.inversePositive
+                      ? differenceValue > 0
+                      : differenceValue < 0
+                  );
+
+                return (
+                  <article
+                    key={metric.label}
+                  >
+                    <span>
+                      {metric.label}
+                    </span>
+
+                    <div>
+                      <section>
+                        <small>
+                          ACTUEL
+                        </small>
+
+                        <strong>
+                          {formatNumber(
+                            metric.current,
+                          )}{" "}
+                          {metric.unit}
+                        </strong>
+                      </section>
+
+                      <section>
+                        <small>
+                          PRÉCÉDENT
+                        </small>
+
+                        <strong>
+                          {formatNumber(
+                            metric.previous,
+                          )}{" "}
+                          {metric.unit}
+                        </strong>
+                      </section>
+                    </div>
+
+                    <footer
+                      className={
+                        positive
+                          ? "is-positive"
+                          : negative
+                            ? "is-negative"
+                            : "is-neutral"
+                      }
+                    >
+                      <span>
+                        {differenceValue ===
+                        null
+                          ? "—"
+                          : differenceValue >
+                              0
+                            ? "↗"
+                            : differenceValue <
+                                0
+                              ? "↘"
+                              : "→"}
+                      </span>
+
+                      <strong>
+                        {differenceValue ===
+                        null
+                          ? "Non disponible"
+                          : `${
+                              differenceValue >
+                              0
+                                ? "+"
+                                : ""
+                            }${formatNumber(
+                              differenceValue,
+                            )} ${
+                              metric.unit
+                            }`}
+                      </strong>
+                    </footer>
+                  </article>
+                );
+              },
+            )}
+          </div>
+        )}
+
+        <footer className="gc-historian-comparison__periods">
+          <div>
+            <span>
+              FENÊTRE ACTUELLE
+            </span>
+
+            <strong>
+              {formatDateTime(
+                visibleHistory[0]
+                  ?.timestamp,
+              )}
+              {" → "}
+              {formatDateTime(
+                visibleHistory.at(-1)
+                  ?.timestamp,
+              )}
+            </strong>
+          </div>
+
+          <div>
+            <span>
+              FENÊTRE PRÉCÉDENTE
+            </span>
+
+            <strong>
+              {formatDateTime(
+                previousHistory[0]
+                  ?.timestamp,
+              )}
+              {" → "}
+              {formatDateTime(
+                previousHistory.at(-1)
+                  ?.timestamp,
+              )}
+            </strong>
+          </div>
+        </footer>
       </section>
 
       <section className="gc-historian-enterprise-events">
