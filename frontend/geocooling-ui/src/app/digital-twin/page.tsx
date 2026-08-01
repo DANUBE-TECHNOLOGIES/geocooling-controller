@@ -47,6 +47,35 @@ type MetricTone =
   | "critical"
   | "neutral";
 
+type ScenarioPresetKey =
+  | "optimal"
+  | "heatwave"
+  | "humid"
+  | "safety-stop";
+
+type ScenarioPreset = {
+  key: ScenarioPresetKey;
+  label: string;
+  description: string;
+  scenario: TwinScenario;
+};
+
+type ProjectionPoint = {
+  hour: number;
+  indoorTemperature: number;
+  dewPoint: number;
+  condensationMargin: number;
+  thermalEffect: number;
+};
+
+type ComparisonMetric = {
+  label: string;
+  unit: string;
+  realtime: number | null;
+  simulation: number;
+  difference: number | null;
+};
+
 function validNumber(
   value: number | null | undefined,
 ): value is number {
@@ -237,6 +266,293 @@ function formatTemperature(
   return `${value.toFixed(1)} °C`;
 }
 
+const PROJECTION_WIDTH = 1_000;
+const PROJECTION_HEIGHT = 240;
+
+const SCENARIO_PRESETS: ScenarioPreset[] = [
+  {
+    key: "optimal",
+    label: "Fonctionnement optimal",
+    description:
+      "Rafraîchissement actif avec marge de condensation confortable.",
+    scenario: {
+      indoorTemperature: 26,
+      humidity: 52,
+      sourceInTemperature: 12.5,
+      sourceOutTemperature: 15,
+      supplyTemperature: 18,
+      returnTemperature: 20.5,
+      valveOpen: true,
+      pumpRunning: true,
+      safetySafe: true,
+    },
+  },
+  {
+    key: "heatwave",
+    label: "Épisode caniculaire",
+    description:
+      "Température intérieure élevée et sollicitation maximale du plancher.",
+    scenario: {
+      indoorTemperature: 30.5,
+      humidity: 48,
+      sourceInTemperature: 13.5,
+      sourceOutTemperature: 16.5,
+      supplyTemperature: 18,
+      returnTemperature: 22.5,
+      valveOpen: true,
+      pumpRunning: true,
+      safetySafe: true,
+    },
+  },
+  {
+    key: "humid",
+    label: "Forte humidité",
+    description:
+      "Conditions proches du point de rosée avec risque de condensation.",
+    scenario: {
+      indoorTemperature: 26,
+      humidity: 78,
+      sourceInTemperature: 13,
+      sourceOutTemperature: 15.5,
+      supplyTemperature: 18,
+      returnTemperature: 20,
+      valveOpen: true,
+      pumpRunning: true,
+      safetySafe: true,
+    },
+  },
+  {
+    key: "safety-stop",
+    label: "Arrêt sécurité",
+    description:
+      "Simulation d’un blocage de la chaîne hydraulique.",
+    scenario: {
+      indoorTemperature: 27,
+      humidity: 60,
+      sourceInTemperature: 13,
+      sourceOutTemperature: 13,
+      supplyTemperature: 22,
+      returnTemperature: 22,
+      valveOpen: false,
+      pumpRunning: false,
+      safetySafe: false,
+    },
+  },
+];
+
+function clamp(
+  value: number,
+  minimum: number,
+  maximum: number,
+): number {
+  return Math.min(
+    maximum,
+    Math.max(minimum, value),
+  );
+}
+
+function calculateProjection(
+  scenario: TwinScenario,
+  hours: number,
+): ProjectionPoint[] {
+  const points: ProjectionPoint[] = [];
+
+  let indoorTemperature =
+    scenario.indoorTemperature;
+
+  for (
+    let hour = 0;
+    hour <= hours;
+    hour += 1
+  ) {
+    const hourlyScenario: TwinScenario = {
+      ...scenario,
+      indoorTemperature,
+    };
+
+    const result =
+      calculateTwin(
+        hourlyScenario,
+      );
+
+    points.push({
+      hour,
+      indoorTemperature,
+      dewPoint:
+        result.dewPoint,
+      condensationMargin:
+        result.condensationMargin,
+      thermalEffect:
+        result.thermalEffect,
+    });
+
+    const coolingPerHour =
+      result.floorFlow
+        ? clamp(
+            result.thermalEffect *
+              0.22,
+            0,
+            0.55,
+          )
+        : 0;
+
+    const naturalDrift =
+      result.floorFlow
+        ? 0.06
+        : 0.22;
+
+    indoorTemperature =
+      indoorTemperature -
+      coolingPerHour +
+      naturalDrift;
+
+    indoorTemperature =
+      clamp(
+        indoorTemperature,
+        16,
+        38,
+      );
+  }
+
+  return points;
+}
+
+function projectionRange(
+  points: ProjectionPoint[],
+): {
+  minimum: number;
+  maximum: number;
+} {
+  const values =
+    points.flatMap(
+      (point) => [
+        point.indoorTemperature,
+        point.dewPoint,
+      ],
+    );
+
+  if (values.length === 0) {
+    return {
+      minimum: 10,
+      maximum: 30,
+    };
+  }
+
+  const rawMinimum =
+    Math.min(...values);
+
+  const rawMaximum =
+    Math.max(...values);
+
+  return {
+    minimum:
+      Math.floor(
+        rawMinimum - 1,
+      ),
+
+    maximum:
+      Math.ceil(
+        rawMaximum + 1,
+      ),
+  };
+}
+
+function projectionPath(
+  points: ProjectionPoint[],
+  key:
+    | "indoorTemperature"
+    | "dewPoint",
+  minimum: number,
+  maximum: number,
+): string {
+  const span =
+    Math.max(
+      0.1,
+      maximum - minimum,
+    );
+
+  return points
+    .map((point, index) => {
+      const x =
+        points.length <= 1
+          ? 0
+          : (
+              index /
+              (
+                points.length -
+                1
+              )
+            ) *
+            PROJECTION_WIDTH;
+
+      const value =
+        point[key];
+
+      const y =
+        PROJECTION_HEIGHT -
+        (
+          (
+            value -
+            minimum
+          ) /
+          span
+        ) *
+          PROJECTION_HEIGHT;
+
+      return `${
+        index === 0
+          ? "M"
+          : "L"
+      } ${x.toFixed(
+        2,
+      )} ${y.toFixed(
+        2,
+      )}`;
+    })
+    .join(" ");
+}
+
+function downloadJson(
+  payload: unknown,
+  filename: string,
+): void {
+  const content =
+    JSON.stringify(
+      payload,
+      null,
+      2,
+    );
+
+  const blob =
+    new Blob(
+      [content],
+      {
+        type:
+          "application/json;charset=utf-8",
+      },
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob,
+    );
+
+  const anchor =
+    document.createElement(
+      "a",
+    );
+
+  anchor.href = url;
+  anchor.download =
+    filename;
+
+  anchor.click();
+
+  URL.revokeObjectURL(
+    url,
+  );
+}
+
 function metricTone(
   value: number,
   warningThreshold: number,
@@ -305,6 +621,20 @@ export default function DigitalTwinPage() {
         buildScenario(null),
     );
 
+  const [
+    selectedPreset,
+    setSelectedPreset,
+  ] =
+    useState<ScenarioPresetKey | null>(
+      null,
+    );
+
+  const [
+    projectionHours,
+    setProjectionHours,
+  ] =
+    useState(12);
+
   useEffect(() => {
     if (
       !snapshot ||
@@ -360,6 +690,8 @@ export default function DigitalTwinPage() {
         [key]: parsed,
       }),
     );
+
+    setSelectedPreset(null);
   };
 
   const updateBoolean = (
@@ -375,6 +707,8 @@ export default function DigitalTwinPage() {
         [key]: value,
       }),
     );
+
+    setSelectedPreset(null);
   };
 
   const loadRealtimeIntoSimulation =
@@ -383,10 +717,28 @@ export default function DigitalTwinPage() {
         buildScenario(snapshot),
       );
 
+      setSelectedPreset(null);
+
       setMode(
         "simulation",
       );
     };
+
+  const applyPreset = (
+    preset: ScenarioPreset,
+  ) => {
+    setSimulation({
+      ...preset.scenario,
+    });
+
+    setSelectedPreset(
+      preset.key,
+    );
+
+    setMode(
+      "simulation",
+    );
+  };
 
   const processTone:
     MetricTone =
@@ -411,6 +763,180 @@ export default function DigitalTwinPage() {
             3,
       ),
     );
+
+  const projection =
+    useMemo(
+      () =>
+        calculateProjection(
+          scenario,
+          projectionHours,
+        ),
+      [
+        scenario,
+        projectionHours,
+      ],
+    );
+
+  const projectionTemperatureRange =
+    useMemo(
+      () =>
+        projectionRange(
+          projection,
+        ),
+      [projection],
+    );
+
+  const indoorProjectionPath =
+    useMemo(
+      () =>
+        projectionPath(
+          projection,
+          "indoorTemperature",
+          projectionTemperatureRange.minimum,
+          projectionTemperatureRange.maximum,
+        ),
+      [
+        projection,
+        projectionTemperatureRange,
+      ],
+    );
+
+  const dewPointProjectionPath =
+    useMemo(
+      () =>
+        projectionPath(
+          projection,
+          "dewPoint",
+          projectionTemperatureRange.minimum,
+          projectionTemperatureRange.maximum,
+        ),
+      [
+        projection,
+        projectionTemperatureRange,
+      ],
+    );
+
+  const finalProjection =
+    projection.at(-1) ??
+    null;
+
+  const minimumCondensationMargin =
+    projection.length === 0
+      ? null
+      : Math.min(
+          ...projection.map(
+            (point) =>
+              point.condensationMargin,
+          ),
+        );
+
+  const riskHours =
+    projection.filter(
+      (point) =>
+        point.condensationMargin <
+        3,
+    ).length;
+
+  const realtimeScenario =
+    buildScenario(snapshot);
+
+  const comparisonMetrics:
+    ComparisonMetric[] = [
+      {
+        label:
+          "Température intérieure",
+        unit: "°C",
+        realtime:
+          snapshot
+            ? realtimeScenario.indoorTemperature
+            : null,
+        simulation:
+          simulation.indoorTemperature,
+        difference:
+          snapshot
+            ? simulation.indoorTemperature -
+              realtimeScenario.indoorTemperature
+            : null,
+      },
+      {
+        label:
+          "Humidité",
+        unit: "%",
+        realtime:
+          snapshot
+            ? realtimeScenario.humidity
+            : null,
+        simulation:
+          simulation.humidity,
+        difference:
+          snapshot
+            ? simulation.humidity -
+              realtimeScenario.humidity
+            : null,
+      },
+      {
+        label:
+          "Départ plancher",
+        unit: "°C",
+        realtime:
+          snapshot
+            ? realtimeScenario.supplyTemperature
+            : null,
+        simulation:
+          simulation.supplyTemperature,
+        difference:
+          snapshot
+            ? simulation.supplyTemperature -
+              realtimeScenario.supplyTemperature
+            : null,
+      },
+      {
+        label:
+          "Retour plancher",
+        unit: "°C",
+        realtime:
+          snapshot
+            ? realtimeScenario.returnTemperature
+            : null,
+        simulation:
+          simulation.returnTemperature,
+        difference:
+          snapshot
+            ? simulation.returnTemperature -
+              realtimeScenario.returnTemperature
+            : null,
+      },
+    ];
+
+  const exportScenario = () => {
+    downloadJson(
+      {
+        exportedAt:
+          new Date().toISOString(),
+
+        mode,
+
+        selectedPreset,
+
+        projectionHours,
+
+        scenario,
+
+        result,
+
+        projection,
+
+        comparison:
+          comparisonMetrics,
+      },
+      `geocooling-digital-twin-${new Date()
+        .toISOString()
+        .replaceAll(
+          ":",
+          "-",
+        )}.json`,
+    );
+  };
 
   return (
     <AppShell
@@ -555,6 +1081,72 @@ export default function DigitalTwinPage() {
           </div>
         </section>
       ) : null}
+
+      <section className="gc-dt-scenario-lab">
+        <header>
+          <div>
+            <p className="gc-page-header__eyebrow">
+              SCENARIO LAB
+            </p>
+
+            <h3>
+              Bibliothèque de scénarios
+            </h3>
+          </div>
+
+          <button
+            type="button"
+            onClick={exportScenario}
+          >
+            Exporter le scénario
+          </button>
+        </header>
+
+        <div>
+          {SCENARIO_PRESETS.map(
+            (preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                className={
+                  selectedPreset ===
+                  preset.key
+                    ? "is-active"
+                    : ""
+                }
+                onClick={() =>
+                  applyPreset(
+                    preset,
+                  )
+                }
+              >
+                <span>
+                  {preset.key ===
+                  "optimal"
+                    ? "✓"
+                    : preset.key ===
+                        "heatwave"
+                      ? "☀"
+                      : preset.key ===
+                          "humid"
+                        ? "%"
+                        : "!"}
+                </span>
+
+                <div>
+                  <strong>
+                    {preset.label}
+                  </strong>
+
+                  <small>
+                    {preset.description}
+                  </small>
+                </div>
+              </button>
+            ),
+          )}
+        </div>
+      </section>
 
       <section className="gc-dt-overview">
         <article
@@ -1404,6 +1996,364 @@ export default function DigitalTwinPage() {
             </strong>
           </article>
         </footer>
+      </section>
+
+      <section className="gc-dt-projection">
+        <header>
+          <div>
+            <p className="gc-page-header__eyebrow">
+              PROJECTION THERMIQUE
+            </p>
+
+            <h3>
+              Évolution estimée sur
+              {" "}
+              {projectionHours} heure(s)
+            </h3>
+          </div>
+
+          <label>
+            <span>
+              HORIZON
+            </span>
+
+            <select
+              value={projectionHours}
+              onChange={(event) =>
+                setProjectionHours(
+                  Number(
+                    event.target.value,
+                  ),
+                )
+              }
+            >
+              <option value="1">
+                1 heure
+              </option>
+
+              <option value="3">
+                3 heures
+              </option>
+
+              <option value="6">
+                6 heures
+              </option>
+
+              <option value="12">
+                12 heures
+              </option>
+
+              <option value="24">
+                24 heures
+              </option>
+            </select>
+          </label>
+        </header>
+
+        <div className="gc-dt-projection__kpis">
+          <article>
+            <span>
+              TEMPÉRATURE FINALE
+            </span>
+
+            <strong>
+              {finalProjection
+                ? formatTemperature(
+                    finalProjection.indoorTemperature,
+                  )
+                : "—"}
+            </strong>
+
+            <small>
+              Variation :
+              {" "}
+              {finalProjection
+                ? `${
+                    finalProjection.indoorTemperature -
+                      scenario.indoorTemperature >
+                    0
+                      ? "+"
+                      : ""
+                  }${(
+                    finalProjection.indoorTemperature -
+                    scenario.indoorTemperature
+                  ).toFixed(
+                    1,
+                  )} °C`
+                : "—"}
+            </small>
+          </article>
+
+          <article>
+            <span>
+              MARGE MINIMALE
+            </span>
+
+            <strong
+              className={
+                minimumCondensationMargin ===
+                null
+                  ? "is-neutral"
+                  : minimumCondensationMargin >=
+                      3
+                    ? "is-good"
+                    : minimumCondensationMargin >=
+                        2
+                      ? "is-warning"
+                      : "is-critical"
+              }
+            >
+              {minimumCondensationMargin ===
+              null
+                ? "—"
+                : `${minimumCondensationMargin.toFixed(
+                    1,
+                  )} °C`}
+            </strong>
+
+            <small>
+              Marge condensation projetée
+            </small>
+          </article>
+
+          <article>
+            <span>
+              HEURES À RISQUE
+            </span>
+
+            <strong
+              className={
+                riskHours === 0
+                  ? "is-good"
+                  : "is-critical"
+              }
+            >
+              {riskHours}
+            </strong>
+
+            <small>
+              Marge inférieure à 3 °C
+            </small>
+          </article>
+
+          <article>
+            <span>
+              CIRCULATION
+            </span>
+
+            <strong
+              className={
+                result.floorFlow
+                  ? "is-good"
+                  : "is-neutral"
+              }
+            >
+              {result.floorFlow
+                ? "ACTIVE"
+                : "INACTIVE"}
+            </strong>
+
+            <small>
+              Sur toute la projection
+            </small>
+          </article>
+        </div>
+
+        <div className="gc-dt-projection__chart">
+          <div className="gc-dt-projection__axis">
+            <span>
+              {projectionTemperatureRange.maximum.toFixed(
+                1,
+              )} °C
+            </span>
+
+            <span>
+              {(
+                (
+                  projectionTemperatureRange.maximum +
+                  projectionTemperatureRange.minimum
+                ) /
+                2
+              ).toFixed(
+                1,
+              )} °C
+            </span>
+
+            <span>
+              {projectionTemperatureRange.minimum.toFixed(
+                1,
+              )} °C
+            </span>
+          </div>
+
+          <div>
+            <svg
+              viewBox={`0 0 ${PROJECTION_WIDTH} ${PROJECTION_HEIGHT}`}
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="Projection de température du jumeau numérique"
+            >
+              <g className="gc-dt-projection-grid">
+                <path d="M0 0 H1000" />
+                <path d="M0 60 H1000" />
+                <path d="M0 120 H1000" />
+                <path d="M0 180 H1000" />
+                <path d="M0 240 H1000" />
+
+                <path d="M0 0 V240" />
+                <path d="M250 0 V240" />
+                <path d="M500 0 V240" />
+                <path d="M750 0 V240" />
+                <path d="M1000 0 V240" />
+              </g>
+
+              <path
+                d={indoorProjectionPath}
+                className="gc-dt-projection-line is-indoor"
+              />
+
+              <path
+                d={dewPointProjectionPath}
+                className="gc-dt-projection-line is-dewpoint"
+              />
+            </svg>
+
+            <footer>
+              <span>
+                H+0
+              </span>
+
+              <span>
+                H+
+                {Math.round(
+                  projectionHours / 2,
+                )}
+              </span>
+
+              <span>
+                H+{projectionHours}
+              </span>
+            </footer>
+          </div>
+        </div>
+
+        <div className="gc-dt-projection__legend">
+          <span className="is-indoor">
+            <i />
+            Température intérieure
+          </span>
+
+          <span className="is-dewpoint">
+            <i />
+            Point de rosée
+          </span>
+        </div>
+      </section>
+
+      <section className="gc-dt-comparison">
+        <header>
+          <div>
+            <p className="gc-page-header__eyebrow">
+              RÉEL / SIMULATION
+            </p>
+
+            <h3>
+              Comparaison des conditions
+            </h3>
+          </div>
+
+          <span>
+            Les valeurs simulées ne sont jamais
+            envoyées au contrôleur.
+          </span>
+        </header>
+
+        <div>
+          {comparisonMetrics.map(
+            (metric) => (
+              <article
+                key={metric.label}
+              >
+                <span>
+                  {metric.label}
+                </span>
+
+                <section>
+                  <div>
+                    <small>
+                      RÉEL
+                    </small>
+
+                    <strong>
+                      {metric.realtime ===
+                      null
+                        ? "—"
+                        : `${metric.realtime.toFixed(
+                            1,
+                          )} ${metric.unit}`}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>
+                      SIMULATION
+                    </small>
+
+                    <strong>
+                      {metric.simulation.toFixed(
+                        1,
+                      )}{" "}
+                      {metric.unit}
+                    </strong>
+                  </div>
+                </section>
+
+                <footer
+                  className={
+                    metric.difference ===
+                    null
+                      ? "is-neutral"
+                      : Math.abs(
+                            metric.difference,
+                          ) <
+                          0.1
+                        ? "is-neutral"
+                        : "is-different"
+                  }
+                >
+                  <span>
+                    {metric.difference ===
+                    null
+                      ? "—"
+                      : metric.difference >
+                          0
+                        ? "↗"
+                        : metric.difference <
+                            0
+                          ? "↘"
+                          : "→"}
+                  </span>
+
+                  <strong>
+                    {metric.difference ===
+                    null
+                      ? "Non disponible"
+                      : `${
+                          metric.difference >
+                          0
+                            ? "+"
+                            : ""
+                        }${metric.difference.toFixed(
+                          1,
+                        )} ${
+                          metric.unit
+                        }`}
+                  </strong>
+                </footer>
+              </article>
+            ),
+          )}
+        </div>
       </section>
 
       <section className="gc-dt-layout">
