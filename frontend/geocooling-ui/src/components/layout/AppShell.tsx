@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { MobileNav } from "@/components/layout/MobileNav";
+import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 
 type AppShellProps = {
@@ -23,24 +25,43 @@ export function AppShell({
   children,
 }: AppShellProps) {
   return (
-    <div className="gc-app">
-      <TopBar
+    <div className="gc-enterprise-shell">
+      <Sidebar
         connected={connected}
         mode={mode}
-        refreshing={refreshing}
-        lastUpdate={lastUpdate}
-        generatedAt={generatedAt}
-        responseTime={responseTime}
-        onRefresh={onRefresh}
       />
 
-      <main className="gc-main">{children}</main>
+      <div className="gc-enterprise-shell__workspace">
+        <TopBar
+          connected={connected}
+          mode={mode}
+          refreshing={refreshing}
+          lastUpdate={lastUpdate}
+          generatedAt={generatedAt}
+          responseTime={responseTime}
+          onRefresh={onRefresh}
+        />
 
-      <footer className="gc-footer">
-        <span>GeoCooling Controller</span>
-        <span>Supervision technique locale</span>
-        <span>Frontend Enterprise — UI005.1</span>
-      </footer>
+        <main className="gc-main">
+          {children}
+        </main>
+
+        <footer className="gc-footer">
+          <span>
+            GeoCooling Controller
+          </span>
+
+          <span>
+            Supervision technique locale
+          </span>
+
+          <span>
+            Frontend Enterprise — UI008.1
+          </span>
+        </footer>
+      </div>
+
+      <MobileNav />
     </div>
   );
 }
