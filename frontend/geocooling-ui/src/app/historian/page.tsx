@@ -721,6 +721,12 @@ export default function HistorianPage() {
   const [cursorIndex, setCursorIndex] =
     useState<number | null>(null);
 
+  const [windowSizeRatio, setWindowSizeRatio] =
+    useState(1);
+
+  const [windowEndRatio, setWindowEndRatio] =
+    useState(1);
+
   const lastStoredAtRef =
     useRef<number>(0);
 
@@ -816,7 +822,7 @@ export default function HistorianPage() {
     snapshot,
   ]);
 
-  const visibleHistory =
+  const periodHistory =
     useMemo(
       () =>
         filterByPeriod(
@@ -826,12 +832,74 @@ export default function HistorianPage() {
       [history, period],
     );
 
+  const visibleHistory =
+    useMemo(() => {
+      if (periodHistory.length <= 2) {
+        return periodHistory;
+      }
+
+      const boundedSizeRatio =
+        clamp(
+          windowSizeRatio,
+          0.1,
+          1,
+        );
+
+      const boundedEndRatio =
+        clamp(
+          windowEndRatio,
+          boundedSizeRatio,
+          1,
+        );
+
+      const visibleCount =
+        Math.max(
+          2,
+          Math.round(
+            periodHistory.length *
+              boundedSizeRatio,
+          ),
+        );
+
+      const endIndex =
+        Math.max(
+          visibleCount,
+          Math.round(
+            periodHistory.length *
+              boundedEndRatio,
+          ),
+        );
+
+      const startIndex =
+        Math.max(
+          0,
+          endIndex - visibleCount,
+        );
+
+      return periodHistory.slice(
+        startIndex,
+        Math.min(
+          periodHistory.length,
+          endIndex,
+        ),
+      );
+    }, [
+      periodHistory,
+      windowSizeRatio,
+      windowEndRatio,
+    ]);
+
   useEffect(() => {
     setCursorIndex(null);
   }, [
     period,
     visibleHistory.length,
   ]);
+
+  useEffect(() => {
+    setWindowSizeRatio(1);
+    setWindowEndRatio(1);
+  }, [period]);
 
   const range =
     useMemo(
@@ -997,6 +1065,20 @@ export default function HistorianPage() {
           )
         ] ?? null;
 
+  const liveWindow =
+    windowEndRatio >= 0.995;
+
+  const zoomPercent =
+    Math.round(
+      windowSizeRatio * 100,
+    );
+
+  const visibleStartTimestamp =
+    visibleHistory[0]?.timestamp ?? null;
+
+  const visibleEndTimestamp =
+    visibleHistory.at(-1)?.timestamp ?? null;
+
   const selectedIndex =
     selectedPoint
       ? visibleHistory.indexOf(
@@ -1055,6 +1137,170 @@ export default function HistorianPage() {
       },
       [visibleHistory.length],
     );
+
+  const handleChartWheel =
+    useCallback(
+      (
+        event: React.WheelEvent<
+          SVGSVGElement
+        >,
+      ) => {
+        if (periodHistory.length < 3) {
+          return;
+        }
+
+        event.preventDefault();
+
+        const bounds =
+          event.currentTarget
+            .getBoundingClientRect();
+
+        const pointerRatio =
+          clamp(
+            (
+              event.clientX -
+              bounds.left
+            ) /
+              bounds.width,
+            0,
+            1,
+          );
+
+        const zoomFactor =
+          event.deltaY > 0
+            ? 1.18
+            : 0.82;
+
+        const previousSize =
+          windowSizeRatio;
+
+        const nextSize =
+          clamp(
+            previousSize *
+              zoomFactor,
+            0.1,
+            1,
+          );
+
+        if (
+          Math.abs(
+            nextSize -
+              previousSize,
+          ) < 0.001
+        ) {
+          return;
+        }
+
+        const previousStart =
+          windowEndRatio -
+          previousSize;
+
+        const focalPoint =
+          previousStart +
+          previousSize *
+            pointerRatio;
+
+        let nextStart =
+          focalPoint -
+          nextSize *
+            pointerRatio;
+
+        nextStart =
+          clamp(
+            nextStart,
+            0,
+            1 - nextSize,
+          );
+
+        setWindowSizeRatio(
+          nextSize,
+        );
+
+        setWindowEndRatio(
+          clamp(
+            nextStart +
+              nextSize,
+            nextSize,
+            1,
+          ),
+        );
+      },
+      [
+        periodHistory.length,
+        windowSizeRatio,
+        windowEndRatio,
+      ],
+    );
+
+  const updateZoom =
+    (
+      value: number,
+    ) => {
+      const nextSize =
+        clamp(
+          value / 100,
+          0.1,
+          1,
+        );
+
+      const previousStart =
+        windowEndRatio -
+        windowSizeRatio;
+
+      const previousCenter =
+        previousStart +
+        windowSizeRatio / 2;
+
+      const nextStart =
+        clamp(
+          previousCenter -
+            nextSize / 2,
+          0,
+          1 - nextSize,
+        );
+
+      setWindowSizeRatio(
+        nextSize,
+      );
+
+      setWindowEndRatio(
+        clamp(
+          nextStart +
+            nextSize,
+          nextSize,
+          1,
+        ),
+      );
+    };
+
+  const moveWindow =
+    (
+      direction: "previous" | "next",
+    ) => {
+      const movement =
+        windowSizeRatio * 0.65;
+
+      const signedMovement =
+        direction === "previous"
+          ? -movement
+          : movement;
+
+      setWindowEndRatio(
+        (current) =>
+          clamp(
+            current +
+              signedMovement,
+            windowSizeRatio,
+            1,
+          ),
+      );
+    };
+
+  const returnToLive =
+    () => {
+      setWindowEndRatio(1);
+      setCursorIndex(null);
+    };
 
   const toggleSeries =
     (
@@ -1469,28 +1715,44 @@ export default function HistorianPage() {
             </h3>
           </div>
 
-          <div className="gc-historian-enterprise-periods">
-            {PERIODS.map(
-              (candidate) => (
-                <button
-                  key={candidate.key}
-                  type="button"
-                  className={
-                    period ===
-                    candidate.key
-                      ? "is-active"
-                      : ""
-                  }
-                  onClick={() =>
-                    setPeriod(
-                      candidate.key,
-                    )
-                  }
-                >
-                  {candidate.label}
-                </button>
-              ),
-            )}
+          <div className="gc-historian-enterprise-period-control">
+            <div className="gc-historian-enterprise-periods">
+              {PERIODS.map(
+                (candidate) => (
+                  <button
+                    key={candidate.key}
+                    type="button"
+                    className={
+                      period ===
+                      candidate.key
+                        ? "is-active"
+                        : ""
+                    }
+                    onClick={() =>
+                      setPeriod(
+                        candidate.key,
+                      )
+                    }
+                  >
+                    {candidate.label}
+                  </button>
+                ),
+              )}
+            </div>
+
+            <span
+              className={
+                liveWindow
+                  ? "gc-historian-window-state is-live"
+                  : "gc-historian-window-state is-history"
+              }
+            >
+              <i />
+
+              {liveWindow
+                ? "TEMPS RÉEL"
+                : "HISTORIQUE"}
+            </span>
           </div>
         </header>
 
@@ -1585,6 +1847,9 @@ export default function HistorianPage() {
                 }
                 onMouseLeave={() =>
                   setCursorIndex(null)
+                }
+                onWheel={
+                  handleChartWheel
                 }
               >
                 <g className="gc-historian-enterprise-grid">
@@ -1694,6 +1959,177 @@ export default function HistorianPage() {
             </div>
           </div>
         )}
+
+        <section className="gc-historian-enterprise-navigator">
+          <header>
+            <div>
+              <span>
+                FENÊTRE TEMPORELLE
+              </span>
+
+              <strong>
+                {formatDateTime(
+                  visibleStartTimestamp,
+                )}
+                {" → "}
+                {formatDateTime(
+                  visibleEndTimestamp,
+                )}
+              </strong>
+            </div>
+
+            <div className="gc-historian-enterprise-navigator__buttons">
+              <button
+                type="button"
+                onClick={() =>
+                  moveWindow(
+                    "previous",
+                  )
+                }
+                disabled={
+                  windowEndRatio -
+                    windowSizeRatio <=
+                  0.001
+                }
+                title="Reculer dans l’historique"
+              >
+                ←
+              </button>
+
+              <button
+                type="button"
+                onClick={returnToLive}
+                disabled={liveWindow}
+              >
+                Temps réel
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  moveWindow(
+                    "next",
+                  )
+                }
+                disabled={liveWindow}
+                title="Avancer dans l’historique"
+              >
+                →
+              </button>
+            </div>
+          </header>
+
+          <div className="gc-historian-enterprise-navigator__controls">
+            <label>
+              <span>POSITION</span>
+
+              <input
+                type="range"
+                min={
+                  Math.round(
+                    windowSizeRatio *
+                      100,
+                  )
+                }
+                max="100"
+                step="1"
+                value={
+                  Math.round(
+                    windowEndRatio *
+                      100,
+                  )
+                }
+                onChange={(event) =>
+                  setWindowEndRatio(
+                    clamp(
+                      Number(
+                        event.target
+                          .value,
+                      ) / 100,
+                      windowSizeRatio,
+                      1,
+                    ),
+                  )
+                }
+                disabled={
+                  periodHistory.length <
+                    3 ||
+                  windowSizeRatio >=
+                    0.999
+                }
+              />
+            </label>
+
+            <label>
+              <span>
+                ZOOM {zoomPercent} %
+              </span>
+
+              <input
+                type="range"
+                min="10"
+                max="100"
+                step="5"
+                value={zoomPercent}
+                onChange={(event) =>
+                  updateZoom(
+                    Number(
+                      event.target.value,
+                    ),
+                  )
+                }
+                disabled={
+                  periodHistory.length <
+                  3
+                }
+              />
+            </label>
+          </div>
+
+          <div className="gc-historian-enterprise-overview">
+            <div
+              className="gc-historian-enterprise-overview__window"
+              style={{
+                left: `${
+                  (
+                    windowEndRatio -
+                    windowSizeRatio
+                  ) * 100
+                }%`,
+                width: `${
+                  windowSizeRatio *
+                  100
+                }%`,
+              }}
+            />
+
+            <span>
+              {formatTime(
+                periodHistory[0]
+                  ?.timestamp,
+              )}
+            </span>
+
+            <span>
+              {periodHistory.length.toLocaleString(
+                "fr-FR",
+              )}{" "}
+              points
+            </span>
+
+            <span>
+              {formatTime(
+                periodHistory.at(-1)
+                  ?.timestamp,
+              )}
+            </span>
+          </div>
+
+          <small>
+            Utilisez la molette sur le graphique pour
+            zoomer autour du curseur.
+          </small>
+        </section>
 
         <footer className="gc-historian-enterprise-cursor-panel">
           <div>
