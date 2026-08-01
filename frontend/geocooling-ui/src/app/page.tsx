@@ -129,6 +129,7 @@ export default function Home() {
               <RuntimeCard
                 snapshot={snapshot}
                 lastUpdate={lastUpdate}
+                responseTime={responseTime}
               />
             </div>
           </section>
