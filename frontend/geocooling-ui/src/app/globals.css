@@ -3305,3 +3305,405 @@ button {
     width: 100%;
   }
 }
+
+/* =========================================================
+   UI006.3 — HYDRAULIC DIAGNOSTICS
+========================================================= */
+
+.gc-hydraulic-console .gc-panel__body {
+  display: grid;
+  gap: 14px;
+}
+
+.gc-hydraulic-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(137, 177, 210, 0.11);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(17, 36, 59, 0.7),
+      rgba(7, 19, 33, 0.7)
+    );
+}
+
+.gc-hydraulic-status__symbol {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border: 1px solid rgba(137, 177, 210, 0.14);
+  border-radius: 50%;
+  color: #8da3b6;
+  background: rgba(137, 177, 210, 0.035);
+  font-size: 1.15rem;
+}
+
+.gc-hydraulic-status__symbol .is-running {
+  color: #43d69e;
+  animation: gc-hydraulic-spin 1s linear infinite;
+}
+
+.gc-hydraulic-label {
+  color: #647d94;
+  font-size: 0.53rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.gc-hydraulic-status strong {
+  display: block;
+  margin-top: 5px;
+  color: #b9ccd9;
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.gc-hydraulic-status.is-running {
+  border-color: rgba(67, 214, 158, 0.24);
+}
+
+.gc-hydraulic-status.is-warning {
+  border-color: rgba(244, 201, 93, 0.25);
+}
+
+.gc-hydraulic-status.is-critical {
+  border-color: rgba(255, 107, 122, 0.28);
+}
+
+.gc-hydraulic-sequence {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    44px
+    minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.gc-hydraulic-device {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 12px;
+  background: rgba(137, 177, 210, 0.022);
+}
+
+.gc-hydraulic-device.is-active {
+  border-color: rgba(67, 214, 158, 0.28);
+  background: rgba(67, 214, 158, 0.035);
+}
+
+.gc-hydraulic-device__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gc-hydraulic-device__head i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #657d91;
+}
+
+.gc-hydraulic-device.is-active
+  .gc-hydraulic-device__head i {
+  background: #43d69e;
+  box-shadow: 0 0 8px rgba(67, 214, 158, 0.55);
+}
+
+.gc-hydraulic-device > strong {
+  display: block;
+  margin-top: 9px;
+  color: #dbe9f2;
+  font-size: 0.75rem;
+}
+
+.gc-hydraulic-device > small {
+  display: block;
+  margin-top: 4px;
+  color: #6e879d;
+  font-size: 0.56rem;
+}
+
+.gc-hydraulic-link {
+  display: flex;
+  justify-content: space-around;
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(137, 177, 210, 0.1);
+}
+
+.gc-hydraulic-link span {
+  width: 7px;
+  height: 6px;
+  border-radius: 999px;
+  background: #536a7d;
+}
+
+.gc-hydraulic-link.is-active span {
+  background: #43d69e;
+  animation: gc-hydraulic-flow 1.15s linear infinite;
+}
+
+.gc-hydraulic-link.is-active span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.gc-hydraulic-link.is-active span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.gc-hydraulic-deltas {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.gc-hydraulic-deltas > article {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 13px;
+  background: rgba(4, 14, 25, 0.36);
+}
+
+.gc-hydraulic-deltas header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gc-hydraulic-deltas header > strong {
+  font-size: 0.51rem;
+  letter-spacing: 0.06em;
+}
+
+.gc-hydraulic-deltas .is-good {
+  color: #43d69e;
+}
+
+.gc-hydraulic-deltas .is-warning {
+  color: #f4c95d;
+}
+
+.gc-hydraulic-deltas .is-neutral {
+  color: #8da3b6;
+}
+
+.gc-hydraulic-delta-value {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 12px 0;
+}
+
+.gc-hydraulic-delta-value strong {
+  color: #e2f1fa;
+  font-size: 1.55rem;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.gc-hydraulic-delta-value span {
+  color: #7890a5;
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.gc-hydraulic-temperature-pair {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.gc-hydraulic-temperature-pair div {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 9px;
+  background: rgba(137, 177, 210, 0.035);
+}
+
+.gc-hydraulic-temperature-pair span {
+  display: block;
+  color: #60798e;
+  font-size: 0.48rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.gc-hydraulic-temperature-pair strong {
+  display: block;
+  margin-top: 5px;
+  color: #bcd0dd;
+  font-size: 0.65rem;
+}
+
+.gc-hydraulic-diagnostics {
+  padding: 13px;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 13px;
+  background: rgba(137, 177, 210, 0.018);
+}
+
+.gc-hydraulic-diagnostics > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.gc-hydraulic-diagnostics > header strong {
+  color: #9eb4c4;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 0.62rem;
+}
+
+.gc-hydraulic-diagnostics > div {
+  display: grid;
+  gap: 7px;
+}
+
+.gc-hydraulic-diagnostics article {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.gc-hydraulic-diagnostics article > span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 0.61rem;
+  font-weight: 900;
+}
+
+.gc-hydraulic-diagnostics article.is-valid > span {
+  color: #43d69e;
+  background: rgba(67, 214, 158, 0.09);
+}
+
+.gc-hydraulic-diagnostics article.is-warning > span {
+  color: #f4c95d;
+  background: rgba(244, 201, 93, 0.09);
+}
+
+.gc-hydraulic-diagnostics article.is-critical > span {
+  color: #ff6b7a;
+  background: rgba(255, 107, 122, 0.09);
+}
+
+.gc-hydraulic-diagnostics article strong {
+  display: block;
+  color: #bfd0dc;
+  font-size: 0.63rem;
+}
+
+.gc-hydraulic-diagnostics article small {
+  display: block;
+  margin-top: 3px;
+  color: #6e879d;
+  font-size: 0.55rem;
+}
+
+.gc-hydraulic-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.gc-hydraulic-footer div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(137, 177, 210, 0.09);
+  border-radius: 999px;
+  color: #7890a5;
+  background: rgba(137, 177, 210, 0.025);
+  font-size: 0.55rem;
+  font-weight: 750;
+}
+
+.gc-hydraulic-footer div > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gc-hydraulic-footer .is-positive {
+  background: #43d69e;
+  box-shadow: 0 0 8px rgba(67, 214, 158, 0.5);
+}
+
+.gc-hydraulic-footer .is-warning {
+  background: #f4c95d;
+}
+
+.gc-hydraulic-footer .is-neutral {
+  background: #7890a5;
+}
+
+@keyframes gc-hydraulic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes gc-hydraulic-flow {
+  0% {
+    opacity: 0.25;
+    transform: translateX(-6px);
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.25;
+    transform: translateX(6px);
+  }
+}
+
+@media (max-width: 480px) {
+  .gc-hydraulic-sequence,
+  .gc-hydraulic-deltas {
+    grid-template-columns: 1fr;
+  }
+
+  .gc-hydraulic-link {
+    width: 6px;
+    height: 30px;
+    margin: auto;
+    flex-direction: column;
+  }
+
+  .gc-hydraulic-link span {
+    width: 6px;
+    height: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-hydraulic-status__symbol .is-running,
+  .gc-hydraulic-link.is-active span {
+    animation: none !important;
+  }
+}
