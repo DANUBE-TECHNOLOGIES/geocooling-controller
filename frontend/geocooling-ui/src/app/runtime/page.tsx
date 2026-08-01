@@ -1,12 +1,11 @@
 "use client";
 
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/AppShell";
-import {
-  GeoCoolingAPI,
-} from "@/lib/geocooling-api";
-import {
-  useGeoCoolingResource,
-} from "@/hooks/useGeoCoolingResource";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { GeoCoolingAPI } from "@/lib/geocooling-api";
+import { useGeoCoolingResource } from "@/hooks/useGeoCoolingResource";
 
 type RuntimePayload = Record<string, unknown>;
 
@@ -14,20 +13,27 @@ type RuntimeEntry = {
   key: string;
   label: string;
   value: unknown;
+  group: string;
+};
+
+type RuntimeState = {
+  label: string;
+  tone: "success" | "warning" | "danger" | "neutral";
+  description: string;
 };
 
 const RUNTIME_POLLING_INTERVAL_MS = 3_000;
 
 function loadRuntime(
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<RuntimePayload> {
   return GeoCoolingAPI.runtime(
-    signal
+    signal,
   ) as Promise<RuntimePayload>;
 }
 
 function isRecord(
-  value: unknown
+  value: unknown,
 ): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
@@ -38,16 +44,18 @@ function isRecord(
 
 function humanizeKey(key: string): string {
   return key
+    .split(".")
+    .at(-1)!
     .replace(/[_-]+/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/\b\w/g, (letter) =>
-      letter.toUpperCase()
+      letter.toUpperCase(),
     );
 }
 
 function flattenRuntime(
   value: unknown,
-  prefix = ""
+  prefix = "",
 ): RuntimeEntry[] {
   if (!isRecord(value)) {
     return [];
@@ -62,7 +70,7 @@ function flattenRuntime(
       if (isRecord(childValue)) {
         return flattenRuntime(
           childValue,
-          path
+          path,
         );
       }
 
@@ -71,26 +79,18 @@ function flattenRuntime(
           key: path,
           label: humanizeKey(path),
           value: childValue,
+          group:
+            path.includes(".")
+              ? path.split(".")[0]
+              : "runtime",
         },
       ];
-    }
+    },
   );
 }
 
-function formatTime(date: Date | null): string {
-  if (!date) {
-    return "En attente";
-  }
-
-  return date.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 function formatRuntimeValue(
-  value: unknown
+  value: unknown,
 ): string {
   if (value === null || value === undefined) {
     return "Non disponible";
@@ -104,56 +104,107 @@ function formatRuntimeValue(
     return Number.isInteger(value)
       ? value.toLocaleString("fr-FR")
       : value.toLocaleString("fr-FR", {
-          maximumFractionDigits: 2,
+          maximumFractionDigits: 3,
         });
   }
 
   if (typeof value === "string") {
-    return value.length > 0
-      ? value
-      : "Non renseigné";
+    if (value.length === 0) {
+      return "Non renseigné";
+    }
+
+    const date = new Date(value);
+
+    if (
+      !Number.isNaN(date.getTime()) &&
+      /date|time|timestamp|generated|updated/i.test(
+        value,
+      )
+    ) {
+      return date.toLocaleString("fr-FR");
+    }
+
+    return value;
   }
 
   if (Array.isArray(value)) {
-    if (value.length === 0) {
-      return "Aucun élément";
-    }
-
-    return value
-      .map((item) =>
-        typeof item === "object"
-          ? JSON.stringify(item)
-          : String(item)
-      )
-      .join(", ");
+    return value.length === 0
+      ? "Aucun élément"
+      : value
+          .map((item) =>
+            typeof item === "object"
+              ? JSON.stringify(item)
+              : String(item),
+          )
+          .join(", ");
   }
 
   return JSON.stringify(value);
 }
 
-function getValueClass(value: unknown): string {
+function runtimeState(
+  connected: boolean,
+  error: string | null,
+  responseTime: number,
+): RuntimeState {
+  if (!connected || error) {
+    return {
+      label: "INDISPONIBLE",
+      tone: "danger",
+      description:
+        "L’endpoint runtime ne fournit plus de données.",
+    };
+  }
+
+  if (responseTime >= 1500) {
+    return {
+      label: "DÉGRADÉ",
+      tone: "warning",
+      description:
+        "Le runtime répond avec une latence élevée.",
+    };
+  }
+
+  return {
+    label: "OPÉRATIONNEL",
+    tone: "success",
+    description:
+      "Le runtime et ses services répondent normalement.",
+  };
+}
+
+function valueTone(
+  value: unknown,
+): string {
   if (typeof value !== "boolean") {
-    return "";
+    return "is-neutral";
   }
 
   return value
-    ? "runtime-value-positive"
-    : "runtime-value-negative";
+    ? "is-positive"
+    : "is-negative";
 }
 
-function getStatusLabel(
-  error: string | null,
-  refreshing: boolean
+function modeFromPayload(
+  data: RuntimePayload | null,
 ): string {
-  if (error) {
-    return "Connexion interrompue";
+  if (!data) {
+    return "INCONNU";
   }
 
-  if (refreshing) {
-    return "Actualisation…";
-  }
+  const candidates = [
+    data.mode,
+    data.runtime_mode,
+    data.controller_mode,
+  ];
 
-  return "Données temps réel";
+  const mode = candidates.find(
+    (value) => typeof value === "string",
+  );
+
+  return typeof mode === "string"
+    ? mode
+    : "INCONNU";
 }
 
 export default function RuntimePage() {
@@ -163,215 +214,412 @@ export default function RuntimePage() {
     refreshing,
     error,
     lastUpdate,
+    responseTime,
     refresh,
   } = useGeoCoolingResource<RuntimePayload>(
     loadRuntime,
     {
       intervalMs:
         RUNTIME_POLLING_INTERVAL_MS,
-    }
+    },
   );
 
-  const entries = data
-    ? flattenRuntime(data)
-    : [];
+  const [search, setSearch] =
+    useState("");
+
+  const [showRaw, setShowRaw] =
+    useState(false);
+
+  const entries = useMemo(
+    () =>
+      data
+        ? flattenRuntime(data)
+        : [],
+    [data],
+  );
+
+  const filteredEntries = useMemo(() => {
+    const normalized =
+      search.trim().toLowerCase();
+
+    if (!normalized) {
+      return entries;
+    }
+
+    return entries.filter(
+      (entry) =>
+        entry.label
+          .toLowerCase()
+          .includes(normalized) ||
+        entry.key
+          .toLowerCase()
+          .includes(normalized) ||
+        formatRuntimeValue(entry.value)
+          .toLowerCase()
+          .includes(normalized),
+    );
+  }, [entries, search]);
+
+  const groups = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          entries.map(
+            (entry) => entry.group,
+          ),
+        ),
+      ),
+    [entries],
+  );
+
+  const booleanEntries =
+    entries.filter(
+      (entry) =>
+        typeof entry.value === "boolean",
+    );
+
+  const activeBooleanCount =
+    booleanEntries.filter(
+      (entry) => entry.value === true,
+    ).length;
 
   const connected = Boolean(
-    data && !error
+    data && !error,
+  );
+
+  const state = runtimeState(
+    connected,
+    error,
+    responseTime,
   );
 
   return (
-    <AppShell connected={connected}>
-      <section className="page-heading">
+    <AppShell
+      connected={connected}
+      mode={modeFromPayload(data)}
+      refreshing={refreshing}
+      lastUpdate={lastUpdate}
+      responseTime={responseTime}
+      onRefresh={() => {
+        void refresh();
+      }}
+    >
+      <section className="gc-page-header">
         <div>
-          <p className="eyebrow">
-            Contrôleur
+          <p className="gc-page-header__eyebrow">
+            OBSERVABILITÉ TECHNIQUE
           </p>
 
-          <h1>Runtime GeoCooling</h1>
+          <h2>Runtime GeoCooling</h2>
 
-          <p className="page-copy">
-            Supervision temps réel du moteur,
-            de ses services et de son état
-            d’exécution.
+          <p>
+            Inspection temps réel du moteur,
+            de ses services, de sa configuration
+            et des indicateurs exposés par
+            l’endpoint runtime.
           </p>
         </div>
 
-        <button
-          className={`live-pill live-button ${
-            error ? "live-error" : ""
-          }`}
-          type="button"
-          onClick={() => void refresh()}
-          disabled={refreshing}
-          title="Actualiser le runtime"
-        >
-          <span className="live-dot" />
+        <div className="gc-page-header__actions">
+          <Link
+            href="/"
+            className="gc-page-link"
+          >
+            ← Dashboard
+          </Link>
 
-          {getStatusLabel(
-            error,
-            refreshing
-          )}
-
-          {" · "}
-
-          {formatTime(lastUpdate)}
-        </button>
+          <StatusBadge
+            label={state.label}
+            tone={state.tone}
+            pulse={
+              state.tone === "success"
+            }
+          />
+        </div>
       </section>
 
       {loading && !data ? (
-        <section
-          className="state-panel"
-          aria-live="polite"
-        >
-          <div className="state-spinner" />
+        <section className="gc-loading-state">
+          <div className="gc-loading-spinner" />
 
           <div>
-            <h2>
+            <strong>
               Lecture du runtime…
-            </h2>
+            </strong>
 
-            <p>
-              Connexion au contrôleur
-              GeoCooling.
-            </p>
+            <span>
+              Connexion à l’endpoint
+              de diagnostic.
+            </span>
           </div>
         </section>
       ) : null}
 
       {error ? (
         <section
-          className="state-panel state-error"
+          className="gc-error-banner"
           role="alert"
         >
           <div>
-            <h2>
+            <strong>
               Runtime indisponible
-            </h2>
+            </strong>
 
             <p>{error}</p>
           </div>
 
           <button
             type="button"
-            onClick={() => void refresh()}
+            onClick={() => {
+              void refresh();
+            }}
           >
             Réessayer
           </button>
         </section>
       ) : null}
 
-      {data ? (
-        <>
-          <section className="runtime-summary">
-            <article className="runtime-summary-card">
-              <span className="runtime-summary-label">
-                Connexion
-              </span>
+      <section className="gc-runtime-page-overview">
+        <article
+          className={`gc-runtime-page-state ${
+            state.tone === "success"
+              ? "is-good"
+              : state.tone === "warning"
+                ? "is-warning"
+                : "is-critical"
+          }`}
+        >
+          <div>
+            <span />
+          </div>
 
-              <strong className="runtime-summary-value runtime-value-positive">
-                Opérationnelle
-              </strong>
+          <section>
+            <span className="gc-runtime-page-label">
+              ÉTAT GLOBAL
+            </span>
 
-              <small>
-                API Runtime accessible
-              </small>
-            </article>
-
-            <article className="runtime-summary-card">
-              <span className="runtime-summary-label">
-                Données exposées
-              </span>
-
-              <strong className="runtime-summary-value">
-                {entries.length}
-              </strong>
-
-              <small>
-                Indicateurs détectés
-              </small>
-            </article>
-
-            <article className="runtime-summary-card">
-              <span className="runtime-summary-label">
-                Rafraîchissement
-              </span>
-
-              <strong className="runtime-summary-value">
-                3 s
-              </strong>
-
-              <small>
-                Polling automatique
-              </small>
-            </article>
+            <strong>
+              {state.description}
+            </strong>
           </section>
+        </article>
 
-          {entries.length > 0 ? (
-            <section className="runtime-grid">
-              {entries.map((entry) => (
-                <article
-                  className="runtime-card"
-                  key={entry.key}
-                >
-                  <span className="runtime-card-label">
-                    {entry.label}
-                  </span>
+        <article>
+          <span className="gc-runtime-page-label">
+            LATENCE ENDPOINT
+          </span>
 
-                  <strong
-                    className={`runtime-card-value ${getValueClass(
-                      entry.value
-                    )}`}
-                  >
-                    {formatRuntimeValue(
-                      entry.value
-                    )}
+          <strong>
+            {responseTime > 0
+              ? `${responseTime} ms`
+              : "—"}
+          </strong>
+
+          <small>
+            Polling toutes les 3 secondes
+          </small>
+        </article>
+
+        <article>
+          <span className="gc-runtime-page-label">
+            INDICATEURS
+          </span>
+
+          <strong>
+            {entries.length}
+          </strong>
+
+          <small>
+            Valeurs aplaties
+          </small>
+        </article>
+
+        <article>
+          <span className="gc-runtime-page-label">
+            GROUPES
+          </span>
+
+          <strong>
+            {groups.length}
+          </strong>
+
+          <small>
+            Sections détectées
+          </small>
+        </article>
+
+        <article>
+          <span className="gc-runtime-page-label">
+            ÉTATS ACTIFS
+          </span>
+
+          <strong>
+            {activeBooleanCount}/
+            {booleanEntries.length}
+          </strong>
+
+          <small>
+            Valeurs booléennes
+          </small>
+        </article>
+      </section>
+
+      <section className="gc-runtime-page-toolbar">
+        <label>
+          <span>
+            Rechercher un indicateur
+          </span>
+
+          <input
+            type="search"
+            value={search}
+            onChange={(event) =>
+              setSearch(event.target.value)
+            }
+            placeholder="Ex. driver, mqtt, ready, mode…"
+          />
+        </label>
+
+        <div>
+          <span>
+            {filteredEntries.length}
+            {" "}
+            résultat(s)
+          </span>
+
+          <button
+            type="button"
+            onClick={() =>
+              setShowRaw((current) => !current)
+            }
+          >
+            {showRaw
+              ? "Masquer JSON"
+              : "Afficher JSON"}
+          </button>
+        </div>
+      </section>
+
+      {filteredEntries.length > 0 ? (
+        <section className="gc-runtime-page-groups">
+          {groups.map((group) => {
+            const groupEntries =
+              filteredEntries.filter(
+                (entry) =>
+                  entry.group === group,
+              );
+
+            if (
+              groupEntries.length === 0
+            ) {
+              return null;
+            }
+
+            return (
+              <article
+                key={group}
+                className="gc-runtime-page-group"
+              >
+                <header>
+                  <div>
+                    <span className="gc-runtime-page-label">
+                      GROUPE
+                    </span>
+
+                    <h3>
+                      {humanizeKey(group)}
+                    </h3>
+                  </div>
+
+                  <strong>
+                    {groupEntries.length}
                   </strong>
+                </header>
 
-                  <code className="runtime-card-path">
-                    {entry.key}
-                  </code>
-                </article>
-              ))}
-            </section>
-          ) : (
-            <section className="state-panel">
-              <div>
-                <h2>
-                  Runtime accessible
-                </h2>
+                <div>
+                  {groupEntries.map(
+                    (entry) => (
+                      <article
+                        key={entry.key}
+                        className="gc-runtime-page-entry"
+                      >
+                        <header>
+                          <span>
+                            {entry.label}
+                          </span>
 
-                <p>
-                  Le contrôleur n’a retourné
-                  aucun indicateur exploitable.
-                </p>
-              </div>
-            </section>
-          )}
+                          {typeof entry.value ===
+                          "boolean" ? (
+                            <i
+                              className={
+                                entry.value
+                                  ? "is-positive"
+                                  : "is-negative"
+                              }
+                            />
+                          ) : null}
+                        </header>
 
-          <section className="panel runtime-raw-panel">
-            <div className="panel-head">
-              <div>
-                <h2 className="panel-title">
-                  Réponse brute
-                </h2>
+                        <strong
+                          className={valueTone(
+                            entry.value,
+                          )}
+                        >
+                          {formatRuntimeValue(
+                            entry.value,
+                          )}
+                        </strong>
 
-                <p className="panel-kicker">
-                  Diagnostic technique de
-                  l’endpoint runtime
-                </p>
-              </div>
+                        <code>
+                          {entry.key}
+                        </code>
+                      </article>
+                    ),
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      ) : (
+        <section className="gc-runtime-page-empty">
+          <strong>
+            Aucun indicateur trouvé
+          </strong>
+
+          <p>
+            Modifie la recherche ou vérifie
+            la réponse de l’endpoint runtime.
+          </p>
+        </section>
+      )}
+
+      {showRaw && data ? (
+        <section className="gc-runtime-page-raw">
+          <header>
+            <div>
+              <span className="gc-runtime-page-label">
+                DIAGNOSTIC BRUT
+              </span>
+
+              <h3>
+                Réponse JSON
+              </h3>
             </div>
 
-            <pre className="runtime-json">
-              {JSON.stringify(
-                data,
-                null,
-                2
-              )}
-            </pre>
-          </section>
-        </>
+            <strong>
+              Lecture seule
+            </strong>
+          </header>
+
+          <pre>
+            {JSON.stringify(
+              data,
+              null,
+              2,
+            )}
+          </pre>
+        </section>
       ) : null}
     </AppShell>
   );

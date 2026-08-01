@@ -22,6 +22,7 @@ export type GeoCoolingResourceState<T> = {
   refreshing: boolean;
   error: string | null;
   lastUpdate: Date | null;
+  responseTime: number;
   refresh: () => Promise<void>;
 };
 
@@ -42,6 +43,8 @@ export function useGeoCoolingResource<T>(
     null
   );
 
+  const [responseTime, setResponseTime] = useState(0);
+
   const activeRequest =
     useRef<AbortController | null>(null);
 
@@ -60,6 +63,8 @@ export function useGeoCoolingResource<T>(
         setRefreshing(true);
       }
 
+      const startedAt = performance.now();
+
       try {
         const response = await loader(controller.signal);
 
@@ -70,6 +75,14 @@ export function useGeoCoolingResource<T>(
         setData(response);
         setError(null);
         setLastUpdate(new Date());
+        setResponseTime(
+          Math.max(
+            0,
+            Math.round(
+              performance.now() - startedAt
+            )
+          )
+        );
       } catch (cause) {
         if (
           cause instanceof Error &&
@@ -136,6 +149,7 @@ export function useGeoCoolingResource<T>(
     refreshing,
     error,
     lastUpdate,
+    responseTime,
     refresh,
   };
 }
