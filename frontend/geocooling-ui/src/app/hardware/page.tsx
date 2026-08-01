@@ -1,6 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -34,6 +40,47 @@ type CheckNode = {
   label: string;
   detail: string;
   tone: HealthTone;
+};
+
+type DiagnosticState = {
+  connected: boolean;
+  deviceReady: boolean | null;
+  safetySafe: boolean | null;
+  pumpRunning: boolean;
+  valveOpen: boolean;
+  availableSensors: number;
+};
+
+type DiagnosticEventType =
+  | "communication"
+  | "device"
+  | "safety"
+  | "pump"
+  | "valve"
+  | "sensors";
+
+type DiagnosticEvent = {
+  id: string;
+  type: DiagnosticEventType;
+  label: string;
+  previousValue: string;
+  currentValue: string;
+  occurredAt: string;
+  severity: HealthTone;
+};
+
+type AvailabilitySample = {
+  timestamp: string;
+  connected: boolean;
+  responseTime: number;
+  deviceReady: boolean | null;
+};
+
+type LatencyStatistics = {
+  count: number;
+  minimum: number | null;
+  maximum: number | null;
+  average: number | null;
 };
 
 function validNumber(
@@ -159,6 +206,432 @@ function sourceLabel(
   }
 }
 
+const DIAGNOSTIC_STORAGE_KEY =
+  "geocooling-ui-hardware-diagnostics-v1";
+
+const AVAILABILITY_STORAGE_KEY =
+  "geocooling-ui-hardware-availability-v1";
+
+const MAX_DIAGNOSTIC_EVENTS = 300;
+const MAX_AVAILABILITY_SAMPLES = 3_600;
+
+function createDiagnosticEventId(): string {
+  return [
+    "HW",
+    Date.now().toString(36),
+    Math.random()
+      .toString(36)
+      .slice(2, 7),
+  ].join("-");
+}
+
+function booleanLabel(
+  value: boolean | null,
+  active: string,
+  inactive: string,
+): string {
+  if (value === null) {
+    return "INCONNU";
+  }
+
+  return value
+    ? active
+    : inactive;
+}
+
+function diagnosticStateFromValues(
+  connected: boolean,
+  snapshot: GeoCoolingSnapshot | null,
+  availableSensors: number,
+): DiagnosticState {
+  return {
+    connected,
+    deviceReady:
+      snapshot?.deviceReady ?? null,
+    safetySafe:
+      snapshot?.safetySafe ?? null,
+    pumpRunning:
+      snapshot?.pumpRunning ?? false,
+    valveOpen:
+      snapshot?.valveOpen ?? false,
+    availableSensors,
+  };
+}
+
+function readStoredArray<T>(
+  key: string,
+): T[] {
+  if (
+    typeof window === "undefined"
+  ) {
+    return [];
+  }
+
+  try {
+    const raw =
+      window.localStorage.getItem(
+        key,
+      );
+
+    if (!raw) {
+      return [];
+    }
+
+    const parsed =
+      JSON.parse(raw);
+
+    return Array.isArray(parsed)
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredArray<T>(
+  key: string,
+  values: T[],
+): void {
+  try {
+    window.localStorage.setItem(
+      key,
+      JSON.stringify(values),
+    );
+  } catch (error) {
+    console.error(
+      "[Hardware Diagnostics] Sauvegarde impossible",
+      error,
+    );
+  }
+}
+
+function severityForTransition(
+  type: DiagnosticEventType,
+  state: DiagnosticState,
+): HealthTone {
+  switch (type) {
+    case "communication":
+      return state.connected
+        ? "good"
+        : "critical";
+
+    case "device":
+      return state.deviceReady === true
+        ? "good"
+        : state.deviceReady === false
+          ? "critical"
+          : "unknown";
+
+    case "safety":
+      return state.safetySafe === true
+        ? "good"
+        : state.safetySafe === false
+          ? "critical"
+          : "unknown";
+
+    case "sensors":
+      return state.availableSensors === 4
+        ? "good"
+        : state.availableSensors > 0
+          ? "warning"
+          : "critical";
+
+    case "pump":
+    case "valve":
+      return "warning";
+  }
+}
+
+function buildDiagnosticEvents(
+  previous: DiagnosticState,
+  current: DiagnosticState,
+): DiagnosticEvent[] {
+  const now =
+    new Date().toISOString();
+
+  const events: DiagnosticEvent[] = [];
+
+  const push = (
+    type: DiagnosticEventType,
+    label: string,
+    previousValue: string,
+    currentValue: string,
+  ) => {
+    events.push({
+      id:
+        createDiagnosticEventId(),
+      type,
+      label,
+      previousValue,
+      currentValue,
+      occurredAt: now,
+      severity:
+        severityForTransition(
+          type,
+          current,
+        ),
+    });
+  };
+
+  if (
+    previous.connected !==
+    current.connected
+  ) {
+    push(
+      "communication",
+      "Communication API",
+      previous.connected
+        ? "CONNECTÉE"
+        : "HORS LIGNE",
+      current.connected
+        ? "CONNECTÉE"
+        : "HORS LIGNE",
+    );
+  }
+
+  if (
+    previous.deviceReady !==
+    current.deviceReady
+  ) {
+    push(
+      "device",
+      "Readiness matériel",
+      booleanLabel(
+        previous.deviceReady,
+        "PRÊT",
+        "NON PRÊT",
+      ),
+      booleanLabel(
+        current.deviceReady,
+        "PRÊT",
+        "NON PRÊT",
+      ),
+    );
+  }
+
+  if (
+    previous.safetySafe !==
+    current.safetySafe
+  ) {
+    push(
+      "safety",
+      "Chaîne de sécurité",
+      booleanLabel(
+        previous.safetySafe,
+        "VALIDÉE",
+        "BLOQUÉE",
+      ),
+      booleanLabel(
+        current.safetySafe,
+        "VALIDÉE",
+        "BLOQUÉE",
+      ),
+    );
+  }
+
+  if (
+    previous.pumpRunning !==
+    current.pumpRunning
+  ) {
+    push(
+      "pump",
+      "Circulateur",
+      previous.pumpRunning
+        ? "EN MARCHE"
+        : "À L’ARRÊT",
+      current.pumpRunning
+        ? "EN MARCHE"
+        : "À L’ARRÊT",
+    );
+  }
+
+  if (
+    previous.valveOpen !==
+    current.valveOpen
+  ) {
+    push(
+      "valve",
+      "Électrovanne",
+      previous.valveOpen
+        ? "OUVERTE"
+        : "FERMÉE",
+      current.valveOpen
+        ? "OUVERTE"
+        : "FERMÉE",
+    );
+  }
+
+  if (
+    previous.availableSensors !==
+    current.availableSensors
+  ) {
+    push(
+      "sensors",
+      "Instrumentation thermique",
+      `${previous.availableSensors}/4`,
+      `${current.availableSensors}/4`,
+    );
+  }
+
+  return events;
+}
+
+function latencyStatistics(
+  samples: AvailabilitySample[],
+): LatencyStatistics {
+  const values =
+    samples
+      .map(
+        (sample) =>
+          sample.responseTime,
+      )
+      .filter(
+        (value) =>
+          Number.isFinite(value) &&
+          value > 0,
+      );
+
+  if (values.length === 0) {
+    return {
+      count: 0,
+      minimum: null,
+      maximum: null,
+      average: null,
+    };
+  }
+
+  return {
+    count:
+      values.length,
+
+    minimum:
+      Math.min(...values),
+
+    maximum:
+      Math.max(...values),
+
+    average:
+      values.reduce(
+        (total, value) =>
+          total + value,
+        0,
+      ) / values.length,
+  };
+}
+
+function formatDateTime(
+  value: string | null,
+): string {
+  if (!value) {
+    return "—";
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return "—";
+  }
+
+  return date.toLocaleString(
+    "fr-FR",
+    {
+      dateStyle: "short",
+      timeStyle: "medium",
+    },
+  );
+}
+
+function formatDurationMs(
+  milliseconds: number,
+): string {
+  const seconds =
+    Math.max(
+      0,
+      Math.floor(
+        milliseconds / 1_000,
+      ),
+    );
+
+  if (seconds < 60) {
+    return `${seconds} s`;
+  }
+
+  const minutes =
+    Math.floor(seconds / 60);
+
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+
+  const hours =
+    Math.floor(minutes / 60);
+
+  const remainingMinutes =
+    minutes % 60;
+
+  if (hours < 24) {
+    return remainingMinutes > 0
+      ? `${hours} h ${remainingMinutes} min`
+      : `${hours} h`;
+  }
+
+  const days =
+    Math.floor(hours / 24);
+
+  return `${days} j ${hours % 24} h`;
+}
+
+function escapeCsv(
+  value: unknown,
+): string {
+  return `"${String(
+    value ?? "",
+  ).replaceAll(
+    '"',
+    '""',
+  )}"`;
+}
+
+function downloadTextFile(
+  content: string,
+  filename: string,
+  mimeType: string,
+): void {
+  const blob =
+    new Blob(
+      [content],
+      {
+        type:
+          mimeType,
+      },
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob,
+    );
+
+  const anchor =
+    document.createElement(
+      "a",
+    );
+
+  anchor.href = url;
+  anchor.download =
+    filename;
+
+  anchor.click();
+
+  URL.revokeObjectURL(
+    url,
+  );
+}
+
 function healthScore(
   checks: CheckNode[],
 ): number {
@@ -200,6 +673,23 @@ export default function HardwarePage() {
     responseTime,
     refresh,
   } = useGeoCooling();
+
+  const [diagnosticEvents, setDiagnosticEvents] =
+    useState<DiagnosticEvent[]>([]);
+
+  const [availabilitySamples, setAvailabilitySamples] =
+    useState<AvailabilitySample[]>([]);
+
+  const [initialized, setInitialized] =
+    useState(false);
+
+  const [clock, setClock] =
+    useState(Date.now());
+
+  const previousStateRef =
+    useRef<DiagnosticState | null>(
+      null,
+    );
 
   const connected =
     Boolean(snapshot && !error);
@@ -249,6 +739,159 @@ export default function HardwarePage() {
       (sensor) =>
         validNumber(sensor.value),
     ).length;
+
+  const currentDiagnosticState =
+    useMemo(
+      () =>
+        diagnosticStateFromValues(
+          connected,
+          snapshot,
+          availableSensors,
+        ),
+      [
+        connected,
+        snapshot,
+        availableSensors,
+      ],
+    );
+
+  useEffect(() => {
+    setDiagnosticEvents(
+      readStoredArray<DiagnosticEvent>(
+        DIAGNOSTIC_STORAGE_KEY,
+      ).slice(
+        -MAX_DIAGNOSTIC_EVENTS,
+      ),
+    );
+
+    setAvailabilitySamples(
+      readStoredArray<AvailabilitySample>(
+        AVAILABILITY_STORAGE_KEY,
+      ).slice(
+        -MAX_AVAILABILITY_SAMPLES,
+      ),
+    );
+
+    setInitialized(true);
+  }, []);
+
+  useEffect(() => {
+    const timer =
+      window.setInterval(
+        () => {
+          setClock(Date.now());
+        },
+        1_000,
+      );
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!initialized) {
+      return;
+    }
+
+    const previous =
+      previousStateRef.current;
+
+    if (previous) {
+      const created =
+        buildDiagnosticEvents(
+          previous,
+          currentDiagnosticState,
+        );
+
+      if (created.length > 0) {
+        setDiagnosticEvents(
+          (current) => {
+            const updated =
+              [
+                ...current,
+                ...created,
+              ].slice(
+                -MAX_DIAGNOSTIC_EVENTS,
+              );
+
+            saveStoredArray(
+              DIAGNOSTIC_STORAGE_KEY,
+              updated,
+            );
+
+            return updated;
+          },
+        );
+      }
+    }
+
+    previousStateRef.current =
+      currentDiagnosticState;
+  }, [
+    initialized,
+    currentDiagnosticState,
+  ]);
+
+  useEffect(() => {
+    if (!initialized) {
+      return;
+    }
+
+    const sample: AvailabilitySample = {
+      timestamp:
+        new Date().toISOString(),
+
+      connected,
+
+      responseTime,
+
+      deviceReady:
+        snapshot?.deviceReady ??
+        null,
+    };
+
+    setAvailabilitySamples(
+      (current) => {
+        const previous =
+          current.at(-1);
+
+        if (
+          previous &&
+          new Date(
+            sample.timestamp,
+          ).getTime() -
+            new Date(
+              previous.timestamp,
+            ).getTime() <
+            9_000
+        ) {
+          return current;
+        }
+
+        const updated =
+          [
+            ...current,
+            sample,
+          ].slice(
+            -MAX_AVAILABILITY_SAMPLES,
+          );
+
+        saveStoredArray(
+          AVAILABILITY_STORAGE_KEY,
+          updated,
+        );
+
+        return updated;
+      },
+    );
+  }, [
+    initialized,
+    connected,
+    responseTime,
+    snapshot?.deviceReady,
+    snapshot?.generatedAt,
+  ]);
 
   const chain: ChainNode[] = [
     {
@@ -463,6 +1106,225 @@ export default function HardwarePage() {
       ? snapshot.sourceOutTemperature -
         snapshot.sourceInTemperature
       : null;
+
+  const latency =
+    useMemo(
+      () =>
+        latencyStatistics(
+          availabilitySamples,
+        ),
+      [availabilitySamples],
+    );
+
+  const connectedSamples =
+    availabilitySamples.filter(
+      (sample) =>
+        sample.connected,
+    ).length;
+
+  const readySamples =
+    availabilitySamples.filter(
+      (sample) =>
+        sample.deviceReady === true,
+    ).length;
+
+  const communicationAvailability =
+    availabilitySamples.length === 0
+      ? null
+      : Math.round(
+          (
+            connectedSamples /
+            availabilitySamples.length
+          ) *
+            100,
+        );
+
+  const hardwareAvailability =
+    availabilitySamples.length === 0
+      ? null
+      : Math.round(
+          (
+            readySamples /
+            availabilitySamples.length
+          ) *
+            100,
+        );
+
+  const communicationLosses =
+    diagnosticEvents.filter(
+      (event) =>
+        event.type ===
+          "communication" &&
+        event.currentValue ===
+          "HORS LIGNE",
+    ).length;
+
+  const pumpTransitions =
+    diagnosticEvents.filter(
+      (event) =>
+        event.type === "pump",
+    ).length;
+
+  const valveTransitions =
+    diagnosticEvents.filter(
+      (event) =>
+        event.type === "valve",
+    ).length;
+
+  const safetyTransitions =
+    diagnosticEvents.filter(
+      (event) =>
+        event.type === "safety",
+    ).length;
+
+  const latestEvent =
+    diagnosticEvents.at(-1) ??
+    null;
+
+  const currentStateSince =
+    latestEvent?.occurredAt ??
+    availabilitySamples[0]
+      ?.timestamp ??
+    snapshot?.generatedAt ??
+    null;
+
+  const stateDuration =
+    currentStateSince
+      ? clock -
+        new Date(
+          currentStateSince,
+        ).getTime()
+      : 0;
+
+  const clearDiagnostics = () => {
+    setDiagnosticEvents([]);
+    setAvailabilitySamples([]);
+
+    try {
+      window.localStorage.removeItem(
+        DIAGNOSTIC_STORAGE_KEY,
+      );
+
+      window.localStorage.removeItem(
+        AVAILABILITY_STORAGE_KEY,
+      );
+    } catch {
+      // Stockage local indisponible.
+    }
+  };
+
+  const exportDiagnosticJson = () => {
+    const payload = {
+      exportedAt:
+        new Date().toISOString(),
+
+      currentState:
+        currentDiagnosticState,
+
+      healthScore:
+        score,
+
+      availability: {
+        communicationPercent:
+          communicationAvailability,
+
+        hardwarePercent:
+          hardwareAvailability,
+
+        sampleCount:
+          availabilitySamples.length,
+
+        communicationLosses,
+
+        latency,
+      },
+
+      transitions: {
+        pump:
+          pumpTransitions,
+
+        valve:
+          valveTransitions,
+
+        safety:
+          safetyTransitions,
+      },
+
+      diagnosticEvents,
+
+      availabilitySamples,
+    };
+
+    downloadTextFile(
+      JSON.stringify(
+        payload,
+        null,
+        2,
+      ),
+      `geocooling-hardware-diagnostic-${new Date()
+        .toISOString()
+        .replaceAll(
+          ":",
+          "-",
+        )}.json`,
+      "application/json;charset=utf-8",
+    );
+  };
+
+  const exportDiagnosticCsv = () => {
+    if (
+      diagnosticEvents.length === 0
+    ) {
+      return;
+    }
+
+    const header = [
+      "event_id",
+      "occurred_at",
+      "type",
+      "label",
+      "previous_value",
+      "current_value",
+      "severity",
+    ];
+
+    const rows =
+      diagnosticEvents.map(
+        (event) => [
+          event.id,
+          event.occurredAt,
+          event.type,
+          event.label,
+          event.previousValue,
+          event.currentValue,
+          event.severity,
+        ],
+      );
+
+    const csv =
+      [
+        header,
+        ...rows,
+      ]
+        .map(
+          (row) =>
+            row
+              .map(escapeCsv)
+              .join(";"),
+        )
+        .join("\n");
+
+    downloadTextFile(
+      csv,
+      `geocooling-hardware-events-${new Date()
+        .toISOString()
+        .replaceAll(
+          ":",
+          "-",
+        )}.csv`,
+      "text/csv;charset=utf-8",
+    );
+  };
 
   return (
     <AppShell
@@ -966,6 +1828,380 @@ export default function HardwarePage() {
               },
             )}
           </div>
+        </article>
+      </section>
+
+      <section className="gc-hw-diagnostic-panel">
+        <header>
+          <div>
+            <p className="gc-page-header__eyebrow">
+              DIAGNOSTIC DE DISPONIBILITÉ
+            </p>
+
+            <h3>
+              Continuité de service
+            </h3>
+          </div>
+
+          <div className="gc-hw-diagnostic-actions">
+            <button
+              type="button"
+              onClick={exportDiagnosticCsv}
+              disabled={
+                diagnosticEvents.length === 0
+              }
+            >
+              Export CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={exportDiagnosticJson}
+            >
+              Export JSON
+            </button>
+
+            <button
+              type="button"
+              className="is-danger"
+              onClick={clearDiagnostics}
+              disabled={
+                diagnosticEvents.length === 0 &&
+                availabilitySamples.length === 0
+              }
+            >
+              Réinitialiser
+            </button>
+          </div>
+        </header>
+
+        <div className="gc-hw-diagnostic-kpis">
+          <article>
+            <span>
+              DISPONIBILITÉ API
+            </span>
+
+            <strong
+              className={
+                communicationAvailability === null
+                  ? "is-unknown"
+                  : communicationAvailability >= 99
+                    ? "is-good"
+                    : communicationAvailability >= 90
+                      ? "is-warning"
+                      : "is-critical"
+              }
+            >
+              {communicationAvailability === null
+                ? "—"
+                : `${communicationAvailability} %`}
+            </strong>
+
+            <small>
+              {availabilitySamples.length} échantillon(s)
+            </small>
+          </article>
+
+          <article>
+            <span>
+              DISPONIBILITÉ MATÉRIEL
+            </span>
+
+            <strong
+              className={
+                hardwareAvailability === null
+                  ? "is-unknown"
+                  : hardwareAvailability >= 99
+                    ? "is-good"
+                    : hardwareAvailability >= 90
+                      ? "is-warning"
+                      : "is-critical"
+              }
+            >
+              {hardwareAvailability === null
+                ? "—"
+                : `${hardwareAvailability} %`}
+            </strong>
+
+            <small>
+              Driver déclaré prêt
+            </small>
+          </article>
+
+          <article>
+            <span>
+              PERTES DE COMMUNICATION
+            </span>
+
+            <strong
+              className={
+                communicationLosses === 0
+                  ? "is-good"
+                  : "is-critical"
+              }
+            >
+              {communicationLosses}
+            </strong>
+
+            <small>
+              Transitions vers hors ligne
+            </small>
+          </article>
+
+          <article>
+            <span>
+              LATENCE MOYENNE
+            </span>
+
+            <strong>
+              {latency.average === null
+                ? "—"
+                : `${Math.round(
+                    latency.average,
+                  )} ms`}
+            </strong>
+
+            <small>
+              Min.{" "}
+              {latency.minimum === null
+                ? "—"
+                : `${latency.minimum} ms`}
+              {" · Max. "}
+              {latency.maximum === null
+                ? "—"
+                : `${latency.maximum} ms`}
+            </small>
+          </article>
+
+          <article>
+            <span>
+              ÉTAT ACTUEL DEPUIS
+            </span>
+
+            <strong>
+              {formatDurationMs(
+                Math.max(
+                  0,
+                  stateDuration,
+                ),
+              )}
+            </strong>
+
+            <small>
+              {formatDateTime(
+                currentStateSince,
+              )}
+            </small>
+          </article>
+        </div>
+
+        <div className="gc-hw-diagnostic-layout">
+          <article className="gc-hw-transition-panel">
+            <header>
+              <div>
+                <span>
+                  COMPTEURS DE TRANSITIONS
+                </span>
+
+                <strong>
+                  Activité de la session
+                </strong>
+              </div>
+            </header>
+
+            <div>
+              <article>
+                <span>POMPE</span>
+                <strong>
+                  {pumpTransitions}
+                </strong>
+                <small>
+                  Changements d’état
+                </small>
+              </article>
+
+              <article>
+                <span>VANNE</span>
+                <strong>
+                  {valveTransitions}
+                </strong>
+                <small>
+                  Changements d’état
+                </small>
+              </article>
+
+              <article>
+                <span>SÉCURITÉ</span>
+                <strong>
+                  {safetyTransitions}
+                </strong>
+                <small>
+                  Changements d’état
+                </small>
+              </article>
+
+              <article>
+                <span>TOTAL</span>
+                <strong>
+                  {diagnosticEvents.length}
+                </strong>
+                <small>
+                  Événements conservés
+                </small>
+              </article>
+            </div>
+          </article>
+
+          <article className="gc-hw-latency-panel">
+            <header>
+              <div>
+                <span>
+                  DISPONIBILITÉ TEMPORELLE
+                </span>
+
+                <strong>
+                  Derniers échantillons
+                </strong>
+              </div>
+
+              <b>
+                {availabilitySamples.length}
+              </b>
+            </header>
+
+            <div className="gc-hw-availability-strip">
+              {availabilitySamples
+                .slice(-120)
+                .map(
+                  (sample) => (
+                    <span
+                      key={sample.timestamp}
+                      className={
+                        !sample.connected
+                          ? "is-critical"
+                          : sample.deviceReady === false
+                            ? "is-warning"
+                            : sample.deviceReady === true
+                              ? "is-good"
+                              : "is-unknown"
+                      }
+                      title={`${formatDateTime(
+                        sample.timestamp,
+                      )} — ${
+                        sample.connected
+                          ? "API connectée"
+                          : "API hors ligne"
+                      } — ${sample.responseTime} ms`}
+                    />
+                  ),
+                )}
+            </div>
+
+            <footer>
+              <span>
+                <i className="is-good" />
+                Disponible
+              </span>
+
+              <span>
+                <i className="is-warning" />
+                Non prêt
+              </span>
+
+              <span>
+                <i className="is-critical" />
+                Hors ligne
+              </span>
+
+              <span>
+                <i className="is-unknown" />
+                Inconnu
+              </span>
+            </footer>
+          </article>
+        </div>
+
+        <article className="gc-hw-event-journal">
+          <header>
+            <div>
+              <span>
+                JOURNAL DES CHANGEMENTS
+              </span>
+
+              <strong>
+                50 derniers événements
+              </strong>
+            </div>
+
+            <b>
+              {diagnosticEvents.length}
+            </b>
+          </header>
+
+          {diagnosticEvents.length === 0 ? (
+            <div className="gc-hw-event-empty">
+              <span>✓</span>
+
+              <div>
+                <strong>
+                  Aucun changement enregistré
+                </strong>
+
+                <small>
+                  Le journal sera alimenté lors des
+                  prochaines transitions matérielles.
+                </small>
+              </div>
+            </div>
+          ) : (
+            <div className="gc-hw-event-list">
+              {[...diagnosticEvents]
+                .slice(-50)
+                .reverse()
+                .map(
+                  (event) => (
+                    <article
+                      key={event.id}
+                      className={toneClass(
+                        event.severity,
+                      )}
+                    >
+                      <span>
+                        {event.severity === "good"
+                          ? "✓"
+                          : event.severity === "unknown"
+                            ? "?"
+                            : "!"}
+                      </span>
+
+                      <div>
+                        <strong>
+                          {event.label}
+                        </strong>
+
+                        <small>
+                          {event.previousValue}
+                          {" → "}
+                          {event.currentValue}
+                        </small>
+                      </div>
+
+                      <section>
+                        <strong>
+                          {formatDateTime(
+                            event.occurredAt,
+                          )}
+                        </strong>
+
+                        <small>
+                          {event.type}
+                        </small>
+                      </section>
+                    </article>
+                  ),
+                )}
+            </div>
+          )}
         </article>
       </section>
 
