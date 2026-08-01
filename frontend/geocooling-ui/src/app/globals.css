@@ -2986,3 +2986,322 @@ button {
     animation: none !important;
   }
 }
+
+/* =========================================================
+   UI006.2 — THERMAL SAFETY ENTERPRISE
+========================================================= */
+
+.gc-thermal-console .gc-panel__body {
+  display: grid;
+  gap: 14px;
+}
+
+.gc-thermal-summary {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gc-thermal-primary {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid rgba(137, 177, 210, 0.11);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(17, 36, 59, 0.68),
+      rgba(7, 19, 33, 0.68)
+    );
+}
+
+.gc-thermal-label {
+  display: block;
+  color: #647d94;
+  font-size: 0.55rem;
+  font-weight: 900;
+  letter-spacing: 0.11em;
+}
+
+.gc-thermal-primary__value {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 11px 0 8px;
+}
+
+.gc-thermal-primary__value strong {
+  color: #e4f3fc;
+  font-size: 1.8rem;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.gc-thermal-primary__value span {
+  color: #7890a5;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.gc-thermal-primary small {
+  color: #6e879d;
+  font-size: 0.61rem;
+}
+
+.gc-thermal-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #8fa4ba;
+  font-size: 0.58rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+}
+
+.gc-thermal-state > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.gc-thermal-state.is-good {
+  color: #43d69e;
+}
+
+.gc-thermal-state.is-warning {
+  color: #f4c95d;
+}
+
+.gc-thermal-state.is-information {
+  color: #54d8ff;
+}
+
+.gc-thermal-state.is-neutral {
+  color: #8fa4ba;
+}
+
+.gc-condensation-panel {
+  padding: 15px;
+  border: 1px solid rgba(137, 177, 210, 0.11);
+  border-radius: 14px;
+  background: rgba(4, 14, 25, 0.42);
+}
+
+.gc-condensation-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.gc-condensation-panel > header > div:first-child {
+  min-width: 0;
+}
+
+.gc-condensation-panel > header > div:first-child strong {
+  display: block;
+  margin-top: 6px;
+  color: #b7cad8;
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.gc-condensation-margin {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 94px;
+  padding: 9px 11px;
+  border: 1px solid rgba(137, 177, 210, 0.11);
+  border-radius: 12px;
+  background: rgba(137, 177, 210, 0.025);
+}
+
+.gc-condensation-margin > span {
+  grid-column: 1 / -1;
+  color: #647d94;
+  font-size: 0.5rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.gc-condensation-margin strong {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.gc-condensation-margin small {
+  color: #7890a5;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.gc-condensation-margin.is-good {
+  color: #43d69e;
+}
+
+.gc-condensation-margin.is-warning {
+  color: #f4c95d;
+}
+
+.gc-condensation-margin.is-critical {
+  color: #ff6b7a;
+}
+
+.gc-condensation-margin.is-neutral {
+  color: #8fa4ba;
+}
+
+.gc-condensation-scale {
+  margin-top: 15px;
+}
+
+.gc-condensation-scale__labels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 6px;
+  color: #5f788d;
+  font-size: 0.48rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.gc-condensation-scale__labels span:nth-child(2) {
+  text-align: center;
+}
+
+.gc-condensation-scale__labels span:last-child {
+  text-align: right;
+}
+
+.gc-condensation-scale__track {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2fr 1fr 3fr;
+  overflow: visible;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.gc-condensation-scale__track > div:first-child {
+  border-radius: 999px 0 0 999px;
+}
+
+.gc-condensation-scale__track > div:nth-child(3) {
+  border-radius: 0 999px 999px 0;
+}
+
+.gc-condensation-scale__track .is-critical {
+  background: rgba(255, 107, 122, 0.72);
+}
+
+.gc-condensation-scale__track .is-warning {
+  background: rgba(244, 201, 93, 0.72);
+}
+
+.gc-condensation-scale__track .is-good {
+  background: rgba(67, 214, 158, 0.72);
+}
+
+.gc-condensation-scale__marker {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 17px;
+  border-radius: 999px;
+  background: #f3f8fc;
+  box-shadow: 0 0 8px rgba(243, 248, 252, 0.55);
+  transform: translate(-50%, -50%);
+  transition: left 450ms ease;
+}
+
+.gc-thermal-metrics {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gc-thermal-metrics article {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(137, 177, 210, 0.09);
+  border-radius: 11px;
+  background: rgba(137, 177, 210, 0.022);
+}
+
+.gc-thermal-metrics article > span {
+  display: block;
+  margin-bottom: 7px;
+  color: #60798e;
+  font-size: 0.5rem;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+}
+
+.gc-thermal-metrics article > strong {
+  color: #dbeaf4;
+  font-size: 1rem;
+}
+
+.gc-thermal-metrics article > small {
+  margin-left: 4px;
+  color: #6e879d;
+  font-size: 0.55rem;
+}
+
+.gc-thermal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gc-thermal-footer div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(137, 177, 210, 0.09);
+  border-radius: 999px;
+  color: #7890a5;
+  background: rgba(137, 177, 210, 0.025);
+  font-size: 0.56rem;
+  font-weight: 750;
+}
+
+.gc-thermal-footer div > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gc-thermal-footer .is-positive {
+  background: #43d69e;
+  box-shadow: 0 0 8px rgba(67, 214, 158, 0.5);
+}
+
+.gc-thermal-footer .is-warning {
+  background: #f4c95d;
+}
+
+.gc-thermal-footer .is-negative {
+  background: #ff6b7a;
+}
+
+@media (max-width: 480px) {
+  .gc-thermal-summary,
+  .gc-thermal-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .gc-condensation-panel > header {
+    flex-direction: column;
+  }
+
+  .gc-condensation-margin {
+    width: 100%;
+  }
+}
