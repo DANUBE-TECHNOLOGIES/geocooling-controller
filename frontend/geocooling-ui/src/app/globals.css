@@ -4461,3 +4461,437 @@ button {
     animation: none !important;
   }
 }
+
+/* =========================================================
+   UI006.5 — CONTROLLER READINESS CONSOLE
+========================================================= */
+
+.gc-controller-console .gc-panel__body {
+  display: grid;
+  gap: 14px;
+}
+
+.gc-controller-label {
+  color: #647d94;
+  font-size: 0.53rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.gc-controller-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(137, 177, 210, 0.11);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(17, 36, 59, 0.7),
+      rgba(7, 19, 33, 0.7)
+    );
+}
+
+.gc-controller-summary.is-good,
+.gc-controller-summary.is-running {
+  border-color: rgba(67, 214, 158, 0.24);
+}
+
+.gc-controller-summary.is-warning {
+  border-color: rgba(244, 201, 93, 0.25);
+}
+
+.gc-controller-summary.is-critical {
+  border-color: rgba(255, 107, 122, 0.28);
+}
+
+.gc-controller-summary__indicator {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border: 1px solid rgba(137, 177, 210, 0.14);
+  border-radius: 50%;
+  background: rgba(137, 177, 210, 0.035);
+}
+
+.gc-controller-summary__indicator span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #8da3b6;
+}
+
+.gc-controller-summary.is-good
+  .gc-controller-summary__indicator span,
+.gc-controller-summary.is-running
+  .gc-controller-summary__indicator span {
+  background: #43d69e;
+  box-shadow:
+    0 0 10px rgba(67, 214, 158, 0.6);
+}
+
+.gc-controller-summary.is-running
+  .gc-controller-summary__indicator span {
+  animation:
+    gc-controller-pulse 1.7s infinite;
+}
+
+.gc-controller-summary.is-warning
+  .gc-controller-summary__indicator span {
+  background: #f4c95d;
+}
+
+.gc-controller-summary.is-critical
+  .gc-controller-summary__indicator span {
+  background: #ff6b7a;
+}
+
+.gc-controller-summary strong {
+  display: block;
+  margin-top: 5px;
+  color: #b9ccd9;
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.gc-controller-mode {
+  padding: 13px;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 13px;
+  background: rgba(4, 14, 25, 0.36);
+}
+
+.gc-controller-mode header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gc-controller-mode header > div:first-child strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+}
+
+.gc-controller-mode__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 12px;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 0.84rem;
+  font-weight: 900;
+  background: rgba(137, 177, 210, 0.025);
+}
+
+.gc-controller-mode p {
+  margin: 10px 0 0;
+  color: #6e879d;
+  font-size: 0.61rem;
+  line-height: 1.45;
+}
+
+.gc-controller-mode .is-good {
+  color: #43d69e;
+}
+
+.gc-controller-mode .is-warning {
+  color: #f4c95d;
+}
+
+.gc-controller-mode .is-information {
+  color: #54d8ff;
+}
+
+.gc-controller-mode .is-neutral {
+  color: #8da3b6;
+}
+
+.gc-controller-readiness {
+  padding: 13px;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 13px;
+  background: rgba(137, 177, 210, 0.018);
+}
+
+.gc-controller-readiness header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.gc-controller-readiness header
+  > div:first-child strong {
+  display: block;
+  margin-top: 5px;
+  color: #b9ccd9;
+  font-size: 0.64rem;
+}
+
+.gc-controller-readiness header
+  > div:last-child {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.gc-controller-readiness header
+  > div:last-child strong {
+  color: #dcebf5;
+  font-size: 1.2rem;
+}
+
+.gc-controller-readiness header
+  > div:last-child span {
+  color: #7890a5;
+  font-size: 0.58rem;
+}
+
+.gc-controller-readiness__track {
+  overflow: hidden;
+  height: 7px;
+  margin-top: 11px;
+  border-radius: 999px;
+  background: rgba(137, 177, 210, 0.1);
+}
+
+.gc-controller-readiness__track > div {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 450ms ease;
+}
+
+.gc-controller-readiness__track .is-good {
+  background:
+    linear-gradient(
+      90deg,
+      #24b882,
+      #43d69e
+    );
+}
+
+.gc-controller-readiness__track .is-warning {
+  background:
+    linear-gradient(
+      90deg,
+      #d9a62e,
+      #f4c95d
+    );
+}
+
+.gc-controller-readiness__track .is-critical {
+  background:
+    linear-gradient(
+      90deg,
+      #d94a5b,
+      #ff6b7a
+    );
+}
+
+.gc-controller-equipment {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.gc-controller-equipment article {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 12px;
+  background: rgba(137, 177, 210, 0.022);
+}
+
+.gc-controller-equipment article.is-active {
+  border-color: rgba(67, 214, 158, 0.28);
+  background: rgba(67, 214, 158, 0.035);
+}
+
+.gc-controller-equipment article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gc-controller-equipment i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #657d91;
+}
+
+.gc-controller-equipment
+  article.is-active i {
+  background: #43d69e;
+  box-shadow:
+    0 0 8px rgba(67, 214, 158, 0.55);
+}
+
+.gc-controller-equipment article > strong {
+  display: block;
+  margin-top: 9px;
+  color: #dbe9f2;
+  font-size: 0.75rem;
+}
+
+.gc-controller-equipment article > small {
+  display: block;
+  margin-top: 4px;
+  color: #6e879d;
+  font-size: 0.56rem;
+}
+
+.gc-controller-checks {
+  padding: 13px;
+  border: 1px solid rgba(137, 177, 210, 0.1);
+  border-radius: 13px;
+  background: rgba(137, 177, 210, 0.018);
+}
+
+.gc-controller-checks > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.gc-controller-checks > header strong {
+  color: #9eb4c4;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-size: 0.62rem;
+}
+
+.gc-controller-checks > div {
+  display: grid;
+  gap: 7px;
+}
+
+.gc-controller-checks article {
+  display: grid;
+  grid-template-columns:
+    22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.gc-controller-checks article > span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 0.61rem;
+  font-weight: 900;
+}
+
+.gc-controller-checks
+  article.is-valid > span {
+  color: #43d69e;
+  background: rgba(67, 214, 158, 0.09);
+}
+
+.gc-controller-checks
+  article.is-warning > span {
+  color: #f4c95d;
+  background: rgba(244, 201, 93, 0.09);
+}
+
+.gc-controller-checks
+  article.is-critical > span {
+  color: #ff6b7a;
+  background: rgba(255, 107, 122, 0.09);
+}
+
+.gc-controller-checks article strong {
+  display: block;
+  color: #bfd0dc;
+  font-size: 0.63rem;
+}
+
+.gc-controller-checks article small {
+  display: block;
+  margin-top: 3px;
+  color: #6e879d;
+  font-size: 0.55rem;
+}
+
+.gc-controller-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.gc-controller-footer div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(137, 177, 210, 0.09);
+  border-radius: 999px;
+  color: #7890a5;
+  background: rgba(137, 177, 210, 0.025);
+  font-size: 0.55rem;
+  font-weight: 750;
+}
+
+.gc-controller-footer div > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gc-controller-footer .is-positive {
+  background: #43d69e;
+  box-shadow:
+    0 0 8px rgba(67, 214, 158, 0.5);
+}
+
+.gc-controller-footer .is-warning {
+  background: #f4c95d;
+}
+
+.gc-controller-footer .is-negative {
+  background: #ff6b7a;
+}
+
+@keyframes gc-controller-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+@media (max-width: 480px) {
+  .gc-controller-equipment {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-controller-summary__indicator span {
+    animation: none !important;
+  }
+}
