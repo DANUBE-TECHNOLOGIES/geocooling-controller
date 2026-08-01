@@ -55,6 +55,38 @@ type SeverityFilter =
   | "all"
   | AlarmSeverity;
 
+type AlarmAnalytics = {
+  totalEvents: number;
+  activeEvents: number;
+  closedEvents: number;
+  acknowledgedEvents: number;
+  averageAcknowledgementMs: number | null;
+  averageResolutionMs: number | null;
+  longestEventMs: number | null;
+  acknowledgementRate: number;
+  resolutionRate: number;
+};
+
+type AlarmOccurrence = {
+  alarmId: string;
+  title: string;
+  source: string;
+  severity: AlarmSeverity;
+  count: number;
+  totalDurationMs: number;
+  averageDurationMs: number | null;
+  lastOccurrenceAt: string;
+};
+
+type TimelineBucket = {
+  label: string;
+  start: number;
+  end: number;
+  critical: number;
+  warning: number;
+  information: number;
+};
+
 const STORAGE_KEY =
   "geocooling-ui-alarm-center-v1";
 
@@ -469,6 +501,477 @@ function formatDateTime(
   );
 }
 
+function millisecondsBetween(
+  start: string | null,
+  end: string | null,
+): number | null {
+  if (!start || !end) {
+    return null;
+  }
+
+  const startTime =
+    new Date(start).getTime();
+
+  const endTime =
+    new Date(end).getTime();
+
+  if (
+    !Number.isFinite(startTime) ||
+    !Number.isFinite(endTime) ||
+    endTime < startTime
+  ) {
+    return null;
+  }
+
+  return endTime - startTime;
+}
+
+function averageNumbers(
+  values: number[],
+): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+
+  return (
+    values.reduce(
+      (total, value) =>
+        total + value,
+      0,
+    ) / values.length
+  );
+}
+
+function formatMetricDuration(
+  milliseconds: number | null,
+): string {
+  if (milliseconds === null) {
+    return "—";
+  }
+
+  const seconds =
+    Math.max(
+      0,
+      Math.round(
+        milliseconds / 1000,
+      ),
+    );
+
+  if (seconds < 60) {
+    return `${seconds} s`;
+  }
+
+  const minutes =
+    Math.floor(seconds / 60);
+
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+
+  const hours =
+    Math.floor(minutes / 60);
+
+  const remainingMinutes =
+    minutes % 60;
+
+  if (hours < 24) {
+    return remainingMinutes > 0
+      ? `${hours} h ${remainingMinutes} min`
+      : `${hours} h`;
+  }
+
+  const days =
+    Math.floor(hours / 24);
+
+  const remainingHours =
+    hours % 24;
+
+  return `${days} j ${remainingHours} h`;
+}
+
+function calculateAnalytics(
+  events: AlarmEvent[],
+  now: number,
+): AlarmAnalytics {
+  const acknowledgementDurations =
+    events
+      .map((event) =>
+        millisecondsBetween(
+          event.startedAt,
+          event.acknowledgedAt,
+        ),
+      )
+      .filter(
+        (
+          duration,
+        ): duration is number =>
+          duration !== null,
+      );
+
+  const resolutionDurations =
+    events
+      .map((event) =>
+        millisecondsBetween(
+          event.startedAt,
+          event.endedAt,
+        ),
+      )
+      .filter(
+        (
+          duration,
+        ): duration is number =>
+          duration !== null,
+      );
+
+  const allDurations =
+    events
+      .map((event) => {
+        const end =
+          event.endedAt ??
+          new Date(now).toISOString();
+
+        return millisecondsBetween(
+          event.startedAt,
+          end,
+        );
+      })
+      .filter(
+        (
+          duration,
+        ): duration is number =>
+          duration !== null,
+      );
+
+  const acknowledgedEvents =
+    events.filter(
+      (event) =>
+        event.acknowledgedAt !==
+        null,
+    ).length;
+
+  const closedEvents =
+    events.filter(
+      (event) =>
+        event.endedAt !== null,
+    ).length;
+
+  return {
+    totalEvents:
+      events.length,
+
+    activeEvents:
+      events.length -
+      closedEvents,
+
+    closedEvents,
+
+    acknowledgedEvents,
+
+    averageAcknowledgementMs:
+      averageNumbers(
+        acknowledgementDurations,
+      ),
+
+    averageResolutionMs:
+      averageNumbers(
+        resolutionDurations,
+      ),
+
+    longestEventMs:
+      allDurations.length > 0
+        ? Math.max(
+            ...allDurations,
+          )
+        : null,
+
+    acknowledgementRate:
+      events.length === 0
+        ? 100
+        : Math.round(
+            (
+              acknowledgedEvents /
+              events.length
+            ) *
+              100,
+          ),
+
+    resolutionRate:
+      events.length === 0
+        ? 100
+        : Math.round(
+            (
+              closedEvents /
+              events.length
+            ) *
+              100,
+          ),
+  };
+}
+
+function calculateOccurrences(
+  events: AlarmEvent[],
+  now: number,
+): AlarmOccurrence[] {
+  const groups =
+    new Map<
+      string,
+      AlarmOccurrence & {
+        durations: number[];
+      }
+    >();
+
+  events.forEach((event) => {
+    const duration =
+      millisecondsBetween(
+        event.startedAt,
+        event.endedAt ??
+          new Date(now).toISOString(),
+      );
+
+    const existing =
+      groups.get(
+        event.alarmId,
+      );
+
+    if (existing) {
+      existing.count += 1;
+
+      if (duration !== null) {
+        existing.durations.push(
+          duration,
+        );
+
+        existing.totalDurationMs +=
+          duration;
+      }
+
+      if (
+        new Date(
+          event.startedAt,
+        ).getTime() >
+        new Date(
+          existing.lastOccurrenceAt,
+        ).getTime()
+      ) {
+        existing.lastOccurrenceAt =
+          event.startedAt;
+
+        existing.severity =
+          event.severity;
+      }
+
+      return;
+    }
+
+    groups.set(
+      event.alarmId,
+      {
+        alarmId:
+          event.alarmId,
+
+        title:
+          event.title,
+
+        source:
+          event.source,
+
+        severity:
+          event.severity,
+
+        count: 1,
+
+        totalDurationMs:
+          duration ?? 0,
+
+        averageDurationMs:
+          duration,
+
+        lastOccurrenceAt:
+          event.startedAt,
+
+        durations:
+          duration === null
+            ? []
+            : [duration],
+      },
+    );
+  });
+
+  return Array.from(
+    groups.values(),
+  )
+    .map((occurrence) => ({
+      alarmId:
+        occurrence.alarmId,
+
+      title:
+        occurrence.title,
+
+      source:
+        occurrence.source,
+
+      severity:
+        occurrence.severity,
+
+      count:
+        occurrence.count,
+
+      totalDurationMs:
+        occurrence.totalDurationMs,
+
+      averageDurationMs:
+        averageNumbers(
+          occurrence.durations,
+        ),
+
+      lastOccurrenceAt:
+        occurrence.lastOccurrenceAt,
+    }))
+    .sort(
+      (left, right) =>
+        right.count -
+          left.count ||
+        right.totalDurationMs -
+          left.totalDurationMs,
+    );
+}
+
+function buildTimeline(
+  events: AlarmEvent[],
+  now: number,
+): TimelineBucket[] {
+  const bucketCount = 12;
+  const horizonMs =
+    24 * 60 * 60 * 1000;
+
+  const bucketDuration =
+    horizonMs /
+    bucketCount;
+
+  const start =
+    now - horizonMs;
+
+  return Array.from(
+    {
+      length:
+        bucketCount,
+    },
+    (_, index) => {
+      const bucketStart =
+        start +
+        index *
+          bucketDuration;
+
+      const bucketEnd =
+        bucketStart +
+        bucketDuration;
+
+      const bucketEvents =
+        events.filter(
+          (event) => {
+            const eventStart =
+              new Date(
+                event.startedAt,
+              ).getTime();
+
+            return (
+              eventStart >=
+                bucketStart &&
+              eventStart <
+                bucketEnd
+            );
+          },
+        );
+
+      const label =
+        new Date(
+          bucketStart,
+        ).toLocaleTimeString(
+          "fr-FR",
+          {
+            hour: "2-digit",
+            minute: "2-digit",
+          },
+        );
+
+      return {
+        label,
+        start:
+          bucketStart,
+        end:
+          bucketEnd,
+
+        critical:
+          bucketEvents.filter(
+            (event) =>
+              event.severity ===
+              "critical",
+          ).length,
+
+        warning:
+          bucketEvents.filter(
+            (event) =>
+              event.severity ===
+              "warning",
+          ).length,
+
+        information:
+          bucketEvents.filter(
+            (event) =>
+              event.severity ===
+              "information",
+          ).length,
+      };
+    },
+  );
+}
+
+function escapeCsvValue(
+  value: unknown,
+): string {
+  return `"${String(
+    value ?? "",
+  ).replaceAll(
+    '"',
+    '""',
+  )}"`;
+}
+
+function downloadTextFile(
+  content: string,
+  filename: string,
+  mimeType: string,
+): void {
+  const blob =
+    new Blob(
+      [content],
+      {
+        type:
+          mimeType,
+      },
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob,
+    );
+
+  const anchor =
+    document.createElement(
+      "a",
+    );
+
+  anchor.href = url;
+  anchor.download =
+    filename;
+
+  anchor.click();
+
+  URL.revokeObjectURL(
+    url,
+  );
+}
+
 function formatDuration(
   start: string,
   end: string | null,
@@ -661,6 +1164,56 @@ export default function AlarmsPage() {
         "information",
     ).length;
 
+  const analytics =
+    useMemo(
+      () =>
+        calculateAnalytics(
+          events,
+          clock,
+        ),
+      [
+        events,
+        clock,
+      ],
+    );
+
+  const occurrences =
+    useMemo(
+      () =>
+        calculateOccurrences(
+          events,
+          clock,
+        ),
+      [
+        events,
+        clock,
+      ],
+    );
+
+  const timeline =
+    useMemo(
+      () =>
+        buildTimeline(
+          events,
+          clock,
+        ),
+      [
+        events,
+        clock,
+      ],
+    );
+
+  const maximumTimelineValue =
+    Math.max(
+      1,
+      ...timeline.map(
+        (bucket) =>
+          bucket.critical +
+          bucket.warning +
+          bucket.information,
+      ),
+    );
+
   const filteredEvents =
     useMemo(() => {
       const normalizedSearch =
@@ -796,6 +1349,147 @@ export default function AlarmsPage() {
 
       return updated;
     });
+  };
+
+  const exportCsv = () => {
+    if (
+      filteredEvents.length === 0
+    ) {
+      return;
+    }
+
+    const header = [
+      "event_id",
+      "alarm_id",
+      "severity",
+      "status",
+      "acknowledged",
+      "source",
+      "title",
+      "description",
+      "value",
+      "started_at",
+      "ended_at",
+      "duration_seconds",
+      "acknowledged_at",
+      "acknowledged_by",
+      "recommendation",
+    ];
+
+    const rows =
+      filteredEvents.map(
+        (event) => {
+          const duration =
+            millisecondsBetween(
+              event.startedAt,
+              event.endedAt ??
+                new Date(
+                  clock,
+                ).toISOString(),
+            );
+
+          return [
+            event.eventId,
+            event.alarmId,
+            event.severity,
+            event.endedAt === null
+              ? "active"
+              : "closed",
+            event.acknowledgedAt !==
+              null,
+            event.source,
+            event.title,
+            event.description,
+            event.value ?? "",
+            event.startedAt,
+            event.endedAt ?? "",
+            duration === null
+              ? ""
+              : Math.round(
+                  duration /
+                    1000,
+                ),
+            event.acknowledgedAt ??
+              "",
+            event.acknowledgedBy ??
+              "",
+            event.recommendation,
+          ];
+        },
+      );
+
+    const csv =
+      [
+        header,
+        ...rows,
+      ]
+        .map(
+          (row) =>
+            row
+              .map(
+                escapeCsvValue,
+              )
+              .join(";"),
+        )
+        .join("\n");
+
+    downloadTextFile(
+      csv,
+      `geocooling-alarm-events-${new Date()
+        .toISOString()
+        .replaceAll(
+          ":",
+          "-",
+        )}.csv`,
+      "text/csv;charset=utf-8",
+    );
+  };
+
+  const exportJson = () => {
+    if (
+      filteredEvents.length === 0
+    ) {
+      return;
+    }
+
+    const payload = {
+      exportedAt:
+        new Date().toISOString(),
+
+      filters: {
+        state:
+          filter,
+
+        severity:
+          severityFilter,
+
+        search,
+      },
+
+      analytics,
+
+      occurrences,
+
+      timeline,
+
+      events:
+        filteredEvents,
+    };
+
+    downloadTextFile(
+      JSON.stringify(
+        payload,
+        null,
+        2,
+      ),
+      `geocooling-alarm-report-${new Date()
+        .toISOString()
+        .replaceAll(
+          ":",
+          "-",
+        )}.json`,
+      "application/json;charset=utf-8",
+    );
   };
 
   const clearClosedHistory =
@@ -1064,6 +1758,28 @@ export default function AlarmsPage() {
 
           <button
             type="button"
+            onClick={exportCsv}
+            disabled={
+              filteredEvents.length ===
+              0
+            }
+          >
+            Export CSV
+          </button>
+
+          <button
+            type="button"
+            onClick={exportJson}
+            disabled={
+              filteredEvents.length ===
+              0
+            }
+          >
+            Export JSON
+          </button>
+
+          <button
+            type="button"
             className="is-danger"
             onClick={
               clearClosedHistory
@@ -1309,6 +2025,306 @@ export default function AlarmsPage() {
             )}
           </div>
         )}
+      </section>
+
+      <section className="gc-alarm-analytics">
+        <header>
+          <div>
+            <p className="gc-page-header__eyebrow">
+              ANALYSE DE PERFORMANCE
+            </p>
+
+            <h3>
+              Indicateurs de traitement
+            </h3>
+          </div>
+
+          <span>
+            {
+              analytics.totalEvents
+            } événement(s) analysé(s)
+          </span>
+        </header>
+
+        <div className="gc-alarm-analytics__kpis">
+          <article>
+            <span>
+              MTTA
+            </span>
+
+            <strong>
+              {formatMetricDuration(
+                analytics
+                  .averageAcknowledgementMs,
+              )}
+            </strong>
+
+            <small>
+              Délai moyen avant acquittement
+            </small>
+          </article>
+
+          <article>
+            <span>
+              MTTR
+            </span>
+
+            <strong>
+              {formatMetricDuration(
+                analytics
+                  .averageResolutionMs,
+              )}
+            </strong>
+
+            <small>
+              Durée moyenne avant résolution
+            </small>
+          </article>
+
+          <article>
+            <span>
+              PLUS LONG ÉVÉNEMENT
+            </span>
+
+            <strong>
+              {formatMetricDuration(
+                analytics
+                  .longestEventMs,
+              )}
+            </strong>
+
+            <small>
+              Actif ou terminé
+            </small>
+          </article>
+
+          <article>
+            <span>
+              TAUX D’ACQUITTEMENT
+            </span>
+
+            <strong>
+              {
+                analytics
+                  .acknowledgementRate
+              } %
+            </strong>
+
+            <small>
+              Événements pris en compte
+            </small>
+          </article>
+
+          <article>
+            <span>
+              TAUX DE RÉSOLUTION
+            </span>
+
+            <strong>
+              {
+                analytics
+                  .resolutionRate
+              } %
+            </strong>
+
+            <small>
+              Événements revenus à la normale
+            </small>
+          </article>
+        </div>
+
+        <div className="gc-alarm-analytics__layout">
+          <article className="gc-alarm-timeline">
+            <header>
+              <div>
+                <span>
+                  CHRONOLOGIE 24 HEURES
+                </span>
+
+                <strong>
+                  Apparitions par tranche de 2 heures
+                </strong>
+              </div>
+
+              <div className="gc-alarm-timeline__legend">
+                <span className="is-critical">
+                  <i />
+                  Critique
+                </span>
+
+                <span className="is-warning">
+                  <i />
+                  Avertissement
+                </span>
+
+                <span className="is-information">
+                  <i />
+                  Information
+                </span>
+              </div>
+            </header>
+
+            <div className="gc-alarm-timeline__chart">
+              {timeline.map(
+                (bucket) => {
+                  const total =
+                    bucket.critical +
+                    bucket.warning +
+                    bucket.information;
+
+                  return (
+                    <article
+                      key={
+                        bucket.start
+                      }
+                      title={`${bucket.label} — ${total} événement(s)`}
+                    >
+                      <div>
+                        <span
+                          className="is-critical"
+                          style={{
+                            height: `${
+                              (
+                                bucket.critical /
+                                maximumTimelineValue
+                              ) *
+                              100
+                            }%`,
+                          }}
+                        />
+
+                        <span
+                          className="is-warning"
+                          style={{
+                            height: `${
+                              (
+                                bucket.warning /
+                                maximumTimelineValue
+                              ) *
+                              100
+                            }%`,
+                          }}
+                        />
+
+                        <span
+                          className="is-information"
+                          style={{
+                            height: `${
+                              (
+                                bucket.information /
+                                maximumTimelineValue
+                              ) *
+                              100
+                            }%`,
+                          }}
+                        />
+                      </div>
+
+                      <strong>
+                        {total}
+                      </strong>
+
+                      <small>
+                        {
+                          bucket.label
+                        }
+                      </small>
+                    </article>
+                  );
+                },
+              )}
+            </div>
+          </article>
+
+          <article className="gc-alarm-recurrence">
+            <header>
+              <div>
+                <span>
+                  RÉCURRENCE
+                </span>
+
+                <strong>
+                  Alarmes les plus fréquentes
+                </strong>
+              </div>
+
+              <b>
+                {
+                  occurrences.length
+                } type(s)
+              </b>
+            </header>
+
+            {occurrences.length ===
+            0 ? (
+              <div className="gc-alarm-recurrence__empty">
+                Aucun événement enregistré.
+              </div>
+            ) : (
+              <div className="gc-alarm-recurrence__list">
+                {occurrences
+                  .slice(0, 8)
+                  .map(
+                    (
+                      occurrence,
+                      index,
+                    ) => (
+                      <article
+                        key={
+                          occurrence.alarmId
+                        }
+                      >
+                        <span>
+                          {String(
+                            index + 1,
+                          ).padStart(
+                            2,
+                            "0",
+                          )}
+                        </span>
+
+                        <div>
+                          <strong>
+                            {
+                              occurrence.title
+                            }
+                          </strong>
+
+                          <small>
+                            {
+                              occurrence.source
+                            }
+                            {" · "}
+                            Dernière :
+                            {" "}
+                            {formatDateTime(
+                              occurrence.lastOccurrenceAt,
+                            )}
+                          </small>
+                        </div>
+
+                        <section>
+                          <strong>
+                            {
+                              occurrence.count
+                            }×
+                          </strong>
+
+                          <small>
+                            Moy.
+                            {" "}
+                            {formatMetricDuration(
+                              occurrence.averageDurationMs,
+                            )}
+                          </small>
+                        </section>
+                      </article>
+                    ),
+                  )}
+              </div>
+            )}
+          </article>
+        </div>
       </section>
 
       <section className="gc-alarm-center-matrix">
