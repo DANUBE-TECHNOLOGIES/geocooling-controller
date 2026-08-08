@@ -1,4 +1,4 @@
-name: F2 Hydraulic Safety
+name: F2-F3 Safety Regression
 
 on:
   push:
@@ -7,15 +7,18 @@ on:
     paths:
       - 'backend/app/geocooling/controller.py'
       - 'backend/app/geocooling/controller_base.py'
+      - 'backend/app/geocooling/safety.py'
+      - 'backend/app/geocooling/thermal.py'
       - 'backend/app/geocooling/waveshare_modbus_driver.py'
       - 'backend/tests/test_f2_controller_hydraulic_hardening.py'
+      - 'backend/tests/test_f3_thermal_fail_closed.py'
       - 'backend/tests/test_geocooling_c019_sequence.py'
       - 'backend/tests/test_geocooling_waveshare_modbus_driver.py'
       - '.github/workflows/f2-hydraulic-safety.yml'
   workflow_dispatch:
 
 jobs:
-  hydraulic-safety:
+  safety-regression:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -34,11 +37,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest
 
-      - name: Run F2 hydraulic regression tests
+      - name: Run F2-F3 safety regression tests
         env:
           PYTHONPATH: .
         run: |
           pytest -q \
             tests/test_f2_controller_hydraulic_hardening.py \
+            tests/test_f3_thermal_fail_closed.py \
             tests/test_geocooling_c019_sequence.py \
             tests/test_geocooling_waveshare_modbus_driver.py
