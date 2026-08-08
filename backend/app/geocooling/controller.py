@@ -1,11 +1,12 @@
-"""F2 hydraulic hardening wrapper for the GeoCooling controller.
+"""F2/F3 safety hardening wrapper for the GeoCooling controller.
 
 The historical controller implementation is preserved in ``controller_base``.
-This wrapper narrows the certified hydraulic behaviour without reopening the
-large legacy module during finalization:
+This wrapper narrows the certified hydraulic and thermal behaviour without
+reopening the large legacy module during finalization:
 
 - START is accepted only from OFF (FAULT requires an explicit reset),
 - thermal safety is re-evaluated immediately before M11+M13 are energized,
+- real hardware fails closed on missing, stale or invalid thermal data,
 - every sequence failure enters FAULT deterministically after a best-effort
   safe-state rollback.
 """
@@ -13,6 +14,7 @@ large legacy module during finalization:
 from __future__ import annotations
 
 import logging
+import os
 
 from app.geocooling.controller_base import (
     GeoCoolingController as _BaseGeoCoolingController,
@@ -24,7 +26,7 @@ logger = logging.getLogger("sbc.geocooling")
 
 
 class GeoCoolingController(_BaseGeoCoolingController):
-    """Certified F2 controller behaviour layered on the legacy controller."""
+    """Certified F2/F3 behaviour layered on the legacy controller."""
 
     def _enter_fault(
         self,
@@ -55,9 +57,6 @@ class GeoCoolingController(_BaseGeoCoolingController):
         self.last_error = final_reason
         self.stopped_at = utc_now()
 
-        # _transition sets the in-memory state before persistence. Therefore,
-        # even a later telemetry/persistence failure cannot leave the state as
-        # RUNNING/STARTING after a sequence fault.
         try:
             self._transition(
                 GeoCoolingState.FAULT,
@@ -74,12 +73,123 @@ class GeoCoolingController(_BaseGeoCoolingController):
                 "Échec de persistance de l'état FAULT; état mémoire forcé."
             )
 
+    def _thermal_safety(self) -> dict[str, object]:
+        """Fail closed on real hardware when thermal telemetry is unusable."""
+
+        if self.driver_name == "simulation":
+            return super()._thermal_safety()
+
+        maximum_age_seconds = max(
+            5.0,
+            float(
+                os.getenv(
+                    "GEOCOOLING_THERMAL_MAX_AGE_SECONDS",
+                    "180",
+                )
+            ),
+        )
+
+        latest = self.thermal_engine.latest()
+
+        base_payload: dict[str, object] = {
+            "dew_point_c": None,
+            "surface_temperature_c": None,
+            "margin_c": None,
+            "required": True,
+            "fresh": False,
+            "data_age_seconds": None,
+            "maximum_age_seconds": maximum_age_seconds,
+        }
+
+        if latest is None:
+            return {
+                **base_payload,
+                "safe": False,
+                "level": "blocked",
+                "reason": (
+                    "Sécurité thermique bloquante : aucune mesure thermique "
+                    "récente disponible sur le matériel réel"
+                ),
+            }
+
+        required_values = {
+            "température intérieure": latest.indoor_temperature_c,
+            "humidité intérieure": latest.indoor_humidity_percent,
+            "température de surface": latest.surface_temperature_c,
+        }
+        missing = [
+            label
+            for label, value in required_values.items()
+            if value is None
+        ]
+
+        try:
+            age_seconds = (
+                utc_now() - latest.timestamp
+            ).total_seconds()
+        except Exception:
+            age_seconds = None
+
+        base_payload["data_age_seconds"] = (
+            round(age_seconds, 3)
+            if age_seconds is not None
+            else None
+        )
+
+        if missing:
+            return {
+                **base_payload,
+                "safe": False,
+                "level": "blocked",
+                "reason": (
+                    "Sécurité thermique bloquante : données manquantes ("
+                    + ", ".join(missing)
+                    + ")"
+                ),
+            }
+
+        if age_seconds is None or age_seconds < -30.0:
+            return {
+                **base_payload,
+                "safe": False,
+                "level": "invalid",
+                "reason": (
+                    "Sécurité thermique bloquante : horodatage thermique invalide"
+                ),
+            }
+
+        if age_seconds > maximum_age_seconds:
+            return {
+                **base_payload,
+                "safe": False,
+                "level": "stale",
+                "reason": (
+                    "Sécurité thermique bloquante : données thermiques périmées "
+                    f"({round(age_seconds, 1)} s > "
+                    f"{round(maximum_age_seconds, 1)} s)"
+                ),
+            }
+
+        decision = self.safety_manager.evaluate(
+            indoor_temperature_c=latest.indoor_temperature_c,
+            indoor_humidity_percent=latest.indoor_humidity_percent,
+            surface_temperature_c=latest.surface_temperature_c,
+        ).as_dict()
+
+        decision.update(
+            {
+                "required": True,
+                "fresh": True,
+                "data_age_seconds": round(age_seconds, 3),
+                "maximum_age_seconds": maximum_age_seconds,
+            }
+        )
+
+        return decision
+
     def request_start(self) -> dict[str, object]:
         """Reject any START unless the controller is explicitly OFF."""
 
-        # Keep the same RLock while delegating to the legacy START path. This
-        # closes the race where another thread could move OFF -> FAULT between
-        # the certified pre-check and the historical request_start() check.
         with self._lock:
             if self.state == GeoCoolingState.FAULT:
                 return {
@@ -140,9 +250,6 @@ class GeoCoolingController(_BaseGeoCoolingController):
                 )
                 return
 
-            # F2: the initial START safety check is not enough. Conditions may
-            # change during valve opening / hydraulic delay, so condensation
-            # safety is checked again immediately before M11+M13 are energized.
             thermal_safety = self._thermal_safety()
             if not bool(thermal_safety.get("safe", False)):
                 reason = str(
@@ -253,8 +360,6 @@ class GeoCoolingController(_BaseGeoCoolingController):
                 "Temporisation avant fermeture de l'électrovanne EV",
             )
 
-            # Keep the historical non-interruptible drain delay: once stopping
-            # has begun, the certified order is M11+M13 OFF then EV CLOSED.
             import time
 
             time.sleep(self.valve_close_delay)
