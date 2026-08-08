@@ -77,6 +77,9 @@ class GeoCoolingController(_BaseGeoCoolingController):
     def request_start(self) -> dict[str, object]:
         """Reject any START unless the controller is explicitly OFF."""
 
+        # Keep the same RLock while delegating to the legacy START path. This
+        # closes the race where another thread could move OFF -> FAULT between
+        # the certified pre-check and the historical request_start() check.
         with self._lock:
             if self.state == GeoCoolingState.FAULT:
                 return {
@@ -108,7 +111,7 @@ class GeoCoolingController(_BaseGeoCoolingController):
                     "status": self.status(),
                 }
 
-        return super().request_start()
+            return super().request_start()
 
     def _start_sequence(self) -> None:
         try:
