@@ -1,11 +1,12 @@
 """Pilote direct du relais Ethernet Waveshare via Modbus TCP.
 
 PATCH C018 — couche matérielle uniquement.
+PATCH F2 — topologie réelle EV + groupe circulateurs M11/M13.
 
 Le pilote reste désarmé par défaut. Les commandes OFF sont toujours permises,
 mais toute commande ON exige ``GEOCOOLING_HARDWARE_ARMED=true`` ou un armement
-explicite par l'API manuelle. Aucune décision du Brain n'est reliée à ce pilote
-par ce patch.
+explicite par l'API manuelle. La sortie logique ``pump`` correspond physiquement
+au groupe M11 + M13, commandé par un actionneur commun.
 """
 
 from __future__ import annotations
@@ -176,7 +177,11 @@ class ModbusTCPClient:
 
 
 class WaveshareModbusDriver:
-    """Pilote sécurisé des huit relais du module Waveshare."""
+    """Pilote sécurisé des huit relais du module Waveshare.
+
+    ``valve`` représente l'électrovanne EV. ``pump`` représente la commande
+    commune des circulateurs M11 et M13.
+    """
 
     RELAY_COUNT = 8
 
@@ -260,7 +265,6 @@ class WaveshareModbusDriver:
             self._record_success(states)
             return states
         except AttributeError:
-            # Compatibilité avec les petits clients factices historiques des tests.
             states = [self.client.read_coil(self._relay_address(i)) for i in range(1, 9)]
             self._record_success(states)
             return states
@@ -301,19 +305,19 @@ class WaveshareModbusDriver:
         self._write_relay(relay_id, bool(enabled))
 
     def open_valve(self) -> None:
-        self._write_relay(self.valve_relay, True, "vanne")
+        self._write_relay(self.valve_relay, True, "EV")
 
     def close_valve(self) -> None:
-        self._write_relay(self.valve_relay, False, "vanne")
+        self._write_relay(self.valve_relay, False, "EV")
 
     def start_pump(self) -> None:
-        self._require_armed("START_PUMP")
+        self._require_armed("START_M11_M13")
         if not self.read_relay(self.valve_relay):
-            raise RuntimeError("Démarrage circulateur refusé : le relais de vanne est OFF.")
-        self._write_relay(self.pump_relay, True, "pompe")
+            raise RuntimeError("Démarrage M11+M13 refusé : le relais EV est OFF.")
+        self._write_relay(self.pump_relay, True, "M11+M13")
 
     def stop_pump(self) -> None:
-        self._write_relay(self.pump_relay, False, "pompe")
+        self._write_relay(self.pump_relay, False, "M11+M13")
 
     def all_off(self) -> None:
         """Coupe les huit sorties, y compris celles non affectées."""
@@ -329,9 +333,8 @@ class WaveshareModbusDriver:
                 return
         except Exception as exc:
             self._record_failure(exc)
-            raise
+            logger.warning("Arrêt groupé Waveshare impossible, repli relais par relais: %s", exc)
 
-        # Repli pour les clients factices et matériels ne supportant pas 0x0F.
         errors: list[str] = []
         for relay_id in range(1, self.RELAY_COUNT + 1):
             try:
@@ -342,16 +345,29 @@ class WaveshareModbusDriver:
             raise RuntimeError("Arrêt global incomplet : " + " ; ".join(errors))
 
     def force_safe_state(self) -> None:
-        """État sûr hydraulique : pompe OFF puis vanne OFF."""
+        """État sûr hydraulique : M11+M13 OFF puis EV fermée.
+
+        En cas d'échec d'une commande ciblée, un arrêt global des huit sorties
+        est tenté comme dernier niveau de repli. Une erreur n'est levée que si
+        l'état sûr ne peut toujours pas être obtenu.
+        """
         errors: list[str] = []
         try:
             self.stop_pump()
         except Exception as exc:
-            errors.append(f"pompe: {exc}")
+            errors.append(f"M11+M13: {exc}")
         try:
             self.close_valve()
         except Exception as exc:
-            errors.append(f"vanne: {exc}")
+            errors.append(f"EV: {exc}")
+
+        if errors:
+            try:
+                self.all_off()
+                return
+            except Exception as exc:
+                errors.append(f"all_off: {exc}")
+
         if errors:
             raise RuntimeError("État sécurisé incomplet : " + " ; ".join(errors))
 
@@ -374,6 +390,12 @@ class WaveshareModbusDriver:
                 "armed": self.armed,
                 "valve_open": valve,
                 "pump_running": pump,
+                "ev_open": valve,
+                "m11_m13_running": pump,
+                "topology": {
+                    "ev": "valve_relay",
+                    "m11_m13": "pump_relay_shared",
+                },
                 "relays": [
                     {"relay": index + 1, "address": self._relay_address(index + 1), "on": state}
                     for index, state in enumerate(states)
@@ -394,6 +416,8 @@ class WaveshareModbusDriver:
                     "address_base": self.address_base,
                     "valve_relay": self.valve_relay,
                     "pump_relay": self.pump_relay,
+                    "ev_relay": self.valve_relay,
+                    "m11_m13_relay": self.pump_relay,
                     "verify_writes": self.verify_writes,
                     "timeout_seconds": self.timeout,
                     "retries": self.retries,
