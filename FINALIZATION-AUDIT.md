@@ -17,11 +17,11 @@ Therefore the existing `valve + pump` software model already matches the real in
 
 ## Remaining blocking gaps before real autonomous operation
 
-1. **Hydraulic sequence must be hardened and certified on real hardware.**
-   The existing sequence already opens EV, waits, starts the common M11+M13 output, supervises operation, then stops M11+M13 before closing EV. Feedback verification and safe-state rollback already exist. Final hardening must ensure a START is never accepted from `FAULT`, re-check thermal safety immediately before M11+M13 start, and preserve a deterministic safe state on every failure path.
+1. **F2 hydraulic hardening is code-complete but still requires executed regression and field certification.**
+   START now requires `OFF`, `FAULT` and `EMERGENCY_STOP` require an explicit reset, thermal safety is re-checked immediately before M11+M13 are energized, and failure paths force a deterministic in-memory `FAULT` after best-effort hardware rollback.
 
-2. **Condensation safety must fail closed on real hardware.**
-   `GEOCOOLING_REQUIRE_THERMAL_SENSORS` currently defaults to false. For a real driver, missing indoor temperature / humidity / floor-surface temperature must block START and request a safe stop while running.
+2. **F3 condensation fail-closed is code-complete but still requires executed regression and field certification.**
+   Real drivers now require a fresh thermal snapshot containing indoor temperature, indoor humidity and floor-surface temperature. Missing, invalid or stale data blocks START and becomes unsafe during RUNNING.
 
 3. **Hardware readiness and certification must explicitly document EV + M11/M13.**
    Readiness and dry-run can retain their two-output model, but labels and certification criteria must reflect the real hydraulic wiring.
@@ -37,21 +37,27 @@ Therefore the existing `valve + pump` software model already matches the real in
 - Fail-safe state remains: M11+M13 OFF, then EV CLOSED.
 - No third actuator implementation required.
 
-### F2 — Certified hydraulic sequence
-- Retain the existing START sequence: EV OPEN -> feedback -> delay -> M11+M13 ON -> feedback -> RUNNING.
-- Retain the existing STOP sequence: M11+M13 OFF -> feedback -> delay -> EV CLOSED -> feedback -> OFF.
-- Reject START from `FAULT`; require explicit reset first.
-- Re-evaluate thermal safety immediately before M11+M13 is energized.
-- Guarantee best-effort safe rollback even if a feedback/write operation itself fails.
-- Add focused regression tests for these hardening rules.
+### F2 — Certified hydraulic sequence — CODE COMPLETE / CERTIFICATION PENDING
+- START sequence retained: EV OPEN -> feedback -> delay -> M11+M13 ON -> feedback -> RUNNING.
+- STOP sequence retained: M11+M13 OFF -> feedback -> delay -> EV CLOSED -> feedback -> OFF.
+- START is rejected from `FAULT` and `EMERGENCY_STOP`; explicit reset required.
+- Controller lock is retained through the final START delegation to close the OFF-to-FAULT race window.
+- Thermal safety is re-evaluated immediately before M11+M13 is energized.
+- Fault handling performs best-effort safe rollback and forces deterministic `FAULT` state even if rollback telemetry/persistence also fails.
+- Focused regression tests added in `backend/tests/test_f2_controller_hydraulic_hardening.py` plus existing C019/Waveshare tests.
+- GitHub Actions workflow added for the F2/F3 regression suite, but no run is currently visible through the connected GitHub integration; executed validation remains pending.
 
-### F3 — Thermal safety fail-closed
-- Require valid fresh temperature/humidity/surface data on real hardware.
-- Block START on missing/stale/invalid thermal data.
-- Trigger safe stop on condensation margin violation or sensor loss during RUNNING.
-- Test dew-point margin and sensor-loss scenarios.
+### F3 — Thermal safety fail-closed — CODE COMPLETE / CERTIFICATION PENDING
+- Non-simulation drivers require a real thermal snapshot.
+- Indoor temperature, indoor humidity and surface temperature are mandatory.
+- Thermal freshness is enforced with `GEOCOOLING_THERMAL_MAX_AGE_SECONDS` (default 180 s, minimum 5 s).
+- Missing, invalid, future-skewed or stale data returns an unsafe decision and blocks START.
+- Dew-point margin continues to be evaluated by `GeoCoolingSafetyManager` once data is complete and fresh.
+- During RUNNING, sensor loss/staleness or condensation risk enters the existing safe STOP sequence.
+- Focused regression tests added in `backend/tests/test_f3_thermal_fail_closed.py`.
+- Executed regression and physical validation remain pending.
 
-### F4 — Field certification and release
+### F4 — Field certification and release — IN PROGRESS
 - Update readiness terminology for EV + M11/M13.
 - Physical relay-by-relay commissioning with autonomous mode disabled.
 - Validate Home Assistant live telemetry and UI states.
