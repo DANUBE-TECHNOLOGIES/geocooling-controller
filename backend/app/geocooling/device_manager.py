@@ -27,36 +27,18 @@ def parse_datetime(
 
 
 class DeviceManager:
-    """
-    Évalue la disponibilité du matériel GeoCooling.
-
-    Ce composant ne commande aucun relais.
-    Il transforme les informations du pilote en état exploitable
-    par le contrôleur et, au sprint suivant, par le Safety Manager.
-    """
+    """Évalue la disponibilité du matériel GeoCooling sans commander de relais."""
 
     def __init__(self, driver: Any) -> None:
         self.driver = driver
-
         self.heartbeat_timeout_seconds = max(
             10,
-            int(
-                os.getenv(
-                    "GEOCOOLING_HEARTBEAT_TIMEOUT_SECONDS",
-                    "90",
-                )
-            ),
+            int(os.getenv("GEOCOOLING_HEARTBEAT_TIMEOUT_SECONDS", "90")),
         )
 
     def status(self) -> dict[str, Any]:
         driver_status = self.driver.status()
-
-        simulation = bool(
-            driver_status.get(
-                "simulation",
-                False,
-            )
-        )
+        simulation = bool(driver_status.get("simulation", False))
 
         if simulation:
             return {
@@ -65,95 +47,75 @@ class DeviceManager:
                 "connected": True,
                 "online": True,
                 "heartbeat_fresh": True,
-                "reason": (
-                    "Matériel simulé : aucune présence ESP32 "
-                    "requise."
-                ),
+                "reason": "Matériel simulé : aucune présence ESP32 requise.",
                 "driver": driver_status,
             }
 
-        connected = bool(
-            driver_status.get(
-                "connected",
-                False,
-            )
-        )
+        connected = bool(driver_status.get("connected", False))
 
         if driver_status.get("driver") == "waveshare_modbus":
             armed = bool(driver_status.get("armed", False))
-            ready = connected and armed
+            device = driver_status.get("device") or {}
+            topology = driver_status.get("topology") or {}
+            ev_relay = device.get("ev_relay", device.get("valve_relay"))
+            m11_m13_relay = device.get("m11_m13_relay", device.get("pump_relay"))
+            topology_valid = (
+                topology.get("ev") == "valve_relay"
+                and topology.get("m11_m13") == "pump_relay_shared"
+                and isinstance(ev_relay, int)
+                and isinstance(m11_m13_relay, int)
+                and ev_relay != m11_m13_relay
+            )
+            ready = connected and armed and topology_valid
+            if ready:
+                reason = (
+                    f"Waveshare Modbus disponible et armé : EV=R{ev_relay}, "
+                    f"M11+M13=R{m11_m13_relay}"
+                )
+            elif not connected:
+                reason = "Waveshare Modbus inaccessible"
+            elif not topology_valid:
+                reason = "Topologie Waveshare EV / M11+M13 invalide ou incomplète"
+            else:
+                reason = "Waveshare Modbus disponible mais désarmé"
+
             return {
                 "ready": ready,
                 "simulation": False,
                 "connected": connected,
                 "online": connected,
                 "heartbeat_fresh": connected,
-                "reason": (
-                    "Waveshare Modbus disponible et armé"
-                    if ready
-                    else (
-                        "Waveshare Modbus disponible mais désarmé"
-                        if connected
-                        else "Waveshare Modbus inaccessible"
-                    )
-                ),
+                "armed": armed,
+                "topology_valid": topology_valid,
+                "actuators": {
+                    "ev": {"relay": ev_relay, "label": "EV"},
+                    "m11_m13": {"relay": m11_m13_relay, "label": "M11+M13"},
+                },
+                "safe_state": "M11+M13 OFF puis EV CLOSED",
+                "reason": reason,
                 "driver": driver_status,
             }
 
-        online = bool(
-            driver_status.get(
-                "device_online",
-                False,
-            )
-        )
-
-        heartbeat_at = parse_datetime(
-            driver_status.get(
-                "last_heartbeat_at"
-            )
-        )
-
+        online = bool(driver_status.get("device_online", False))
+        heartbeat_at = parse_datetime(driver_status.get("last_heartbeat_at"))
         heartbeat_age_seconds: int | None = None
         heartbeat_fresh = False
 
         if heartbeat_at is not None:
             heartbeat_age_seconds = max(
                 0,
-                int(
-                    (
-                        utc_now()
-                        - heartbeat_at
-                    ).total_seconds()
-                ),
+                int((utc_now() - heartbeat_at).total_seconds()),
             )
+            heartbeat_fresh = heartbeat_age_seconds <= self.heartbeat_timeout_seconds
 
-            heartbeat_fresh = (
-                heartbeat_age_seconds
-                <= self.heartbeat_timeout_seconds
-            )
-
-        ready = (
-            connected
-            and online
-            and heartbeat_fresh
-        )
-
+        ready = connected and online and heartbeat_fresh
         reasons: list[str] = []
-
         if not connected:
-            reasons.append(
-                "pilote MQTT déconnecté"
-            )
-
+            reasons.append("pilote MQTT déconnecté")
         if not online:
-            reasons.append(
-                "ESP32 non disponible"
-            )
-
+            reasons.append("ESP32 non disponible")
         if not heartbeat_fresh:
-            reasons.append(
-                "heartbeat absent ou trop ancien"
-            )
+            reasons.append("heartbeat absent ou trop ancien")
 
         return {
             "ready": ready,
@@ -161,14 +123,8 @@ class DeviceManager:
             "connected": connected,
             "online": online,
             "heartbeat_fresh": heartbeat_fresh,
-            "heartbeat_age_seconds":
-                heartbeat_age_seconds,
-            "heartbeat_timeout_seconds":
-                self.heartbeat_timeout_seconds,
-            "reason": (
-                "Matériel GeoCooling disponible"
-                if ready
-                else ", ".join(reasons)
-            ),
+            "heartbeat_age_seconds": heartbeat_age_seconds,
+            "heartbeat_timeout_seconds": self.heartbeat_timeout_seconds,
+            "reason": "Matériel GeoCooling disponible" if ready else ", ".join(reasons),
             "driver": driver_status,
         }
