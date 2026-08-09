@@ -45,6 +45,39 @@ type HomeAssistantState = {
   missing_measurements?: string[];
 };
 
+type TelemetryRoleState = "UNSET" | "SOURCE_ABSENT" | "METRIC_ABSENT" | "STALE" | "OK";
+
+type TelemetryRoleHealth = {
+  role?: string;
+  sensor_name?: string | null;
+  metric?: string;
+  state?: TelemetryRoleState;
+  ready?: boolean;
+  reason?: string;
+  stale_seconds?: number;
+  measured_at?: string | null;
+  age_seconds?: number | null;
+  value?: number | string | null;
+  unit?: string | null;
+  mqtt_topic?: string | null;
+};
+
+type TelemetryHealth = {
+  component?: string;
+  ready?: boolean;
+  fail_closed?: boolean;
+  stale_seconds?: number;
+  upstream_state?: "UPSTREAM_EMPTY" | "OBSERVED" | string;
+  observed_sensor_count?: number;
+  hydraulic_candidate_count?: number;
+  configured_role_count?: number;
+  roles?: Record<string, TelemetryRoleHealth>;
+  read_only?: boolean;
+  hardware_touched?: boolean;
+  mqtt_publish?: boolean;
+  database_write?: boolean;
+};
+
 const KNOWN_NON_HYDRAULIC = new Set([
   "gc_temp_salon",
   "gc_temp_etage",
@@ -52,6 +85,12 @@ const KNOWN_NON_HYDRAULIC = new Set([
 ]);
 
 const ROLE_LABELS: Record<string, string> = {
+  surface: "Surface plancher",
+  floor_supply: "Départ plancher",
+  floor_return: "Retour plancher",
+  source_inlet: "Entrée source",
+  source_outlet: "Sortie source",
+  flow: "Débit hydraulique",
   floor_surface_temperature_c: "Surface plancher",
   floor_supply_temperature_c: "Départ plancher",
   floor_return_temperature_c: "Retour plancher",
@@ -60,12 +99,25 @@ const ROLE_LABELS: Record<string, string> = {
   flow_rate_l_min: "Débit hydraulique",
 };
 
+const STATE_LABELS: Record<TelemetryRoleState, string> = {
+  UNSET: "NON CONFIGURÉ",
+  SOURCE_ABSENT: "SOURCE ABSENTE",
+  METRIC_ABSENT: "MÉTRIQUE ABSENTE",
+  STALE: "PÉRIMÉE",
+  OK: "OK",
+};
+
 function displayDate(value?: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
     : date.toLocaleString("fr-FR");
+}
+
+function displayRoleValue(role: TelemetryRoleHealth): string {
+  if (role.value === null || role.value === undefined) return "—";
+  return `${role.value}${role.unit ? ` ${role.unit}` : ""}`;
 }
 
 export default function TelemetryPage() {
@@ -81,6 +133,7 @@ export default function TelemetryPage() {
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const [rows, setRows] = useState<LatestSensor[]>([]);
   const [homeAssistant, setHomeAssistant] = useState<HomeAssistantState | null>(null);
+  const [telemetryHealth, setTelemetryHealth] = useState<TelemetryHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -89,14 +142,21 @@ export default function TelemetryPage() {
     setError(null);
 
     try {
-      const [discoveryResponse, sensorsResponse, homeAssistantResponse] =
-        await Promise.all([
-          fetch("/api/geocooling/sensor-mqtt-discovery", { cache: "no-store" }),
-          fetch("/api/sensors/latest", { cache: "no-store" }),
-          fetch("/api/geocooling/brain-v2/integration/home-assistant/state", {
-            cache: "no-store",
-          }),
-        ]);
+      const [
+        discoveryResponse,
+        sensorsResponse,
+        homeAssistantResponse,
+        telemetryHealthResponse,
+      ] = await Promise.all([
+        fetch("/api/geocooling/sensor-mqtt-discovery", { cache: "no-store" }),
+        fetch("/api/sensors/latest", { cache: "no-store" }),
+        fetch("/api/geocooling/brain-v2/integration/home-assistant/state", {
+          cache: "no-store",
+        }),
+        fetch("/api/geocooling/brain-v2/integration/home-assistant/telemetry-health", {
+          cache: "no-store",
+        }),
+      ]);
 
       if (!discoveryResponse.ok) {
         throw new Error(`Discovery HTTP ${discoveryResponse.status}`);
@@ -113,6 +173,12 @@ export default function TelemetryPage() {
         setHomeAssistant((await homeAssistantResponse.json()) as HomeAssistantState);
       } else {
         setHomeAssistant(null);
+      }
+
+      if (telemetryHealthResponse.ok) {
+        setTelemetryHealth((await telemetryHealthResponse.json()) as TelemetryHealth);
+      } else {
+        setTelemetryHealth(null);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Erreur télémétrie");
@@ -143,12 +209,21 @@ export default function TelemetryPage() {
     return [...names].sort();
   }, [rows]);
 
-  const upstreamEmpty = hydraulicCandidates.length === 0;
+  const roleHealth = useMemo(
+    () => Object.entries(telemetryHealth?.roles ?? {}),
+    [telemetryHealth]
+  );
+
+  const upstreamEmpty = telemetryHealth
+    ? telemetryHealth.upstream_state === "UPSTREAM_EMPTY"
+    : hydraulicCandidates.length === 0;
   const mqttConnected = discovery?.mqtt?.connected === true;
   const messageCount = discovery?.mqtt?.message_count ?? 0;
   const missingRoles = homeAssistant?.missing_measurements ?? [];
-  const readyRoles = homeAssistant?.hydraulic_roles_ready ?? 0;
-  const roleCount = homeAssistant?.hydraulic_role_count ?? 6;
+  const readyRoles = telemetryHealth
+    ? roleHealth.filter(([, role]) => role.ready === true).length
+    : homeAssistant?.hydraulic_roles_ready ?? 0;
+  const roleCount = roleHealth.length || homeAssistant?.hydraulic_role_count || 6;
 
   const refreshAll = useCallback(() => {
     refresh();
@@ -173,8 +248,14 @@ export default function TelemetryPage() {
             <p>Chaîne passive WT32 / ESPHome → MQTT → GeoCooling.</p>
           </div>
           <StatusBadge
-            label={upstreamEmpty ? "AMONT ABSENT" : "TÉLÉMÉTRIE OBSERVÉE"}
-            tone={upstreamEmpty ? "danger" : "success"}
+            label={
+              telemetryHealth?.ready
+                ? "6 RÔLES PRÊTS"
+                : upstreamEmpty
+                  ? "AMONT ABSENT"
+                  : "FAIL-CLOSED"
+            }
+            tone={telemetryHealth?.ready ? "success" : "danger"}
           />
         </header>
 
@@ -194,15 +275,69 @@ export default function TelemetryPage() {
 
           <article className="gc-panel">
             <span className="gc-eyebrow">SONDES</span>
-            <h2>{discovery?.discovery?.sensor_count ?? 0}</h2>
-            <p>Sondes température reconnues par la découverte MQTT.</p>
+            <h2>{telemetryHealth?.observed_sensor_count ?? discovery?.discovery?.sensor_count ?? 0}</h2>
+            <p>Sources actuellement observées par la chaîne de télémétrie.</p>
           </article>
 
           <article className="gc-panel">
-            <span className="gc-eyebrow">HYDRAULIQUE</span>
-            <h2>{hydraulicCandidates.length}</h2>
-            <p>Candidats surface / températures hydrauliques / débit.</p>
+            <span className="gc-eyebrow">RÔLES HYDRAULIQUES</span>
+            <h2>{readyRoles} / {roleCount}</h2>
+            <p>{telemetryHealth?.configured_role_count ?? 0} rôles configurés, seuil de fraîcheur {telemetryHealth?.stale_seconds ?? 120} s.</p>
           </article>
+        </section>
+
+        <section className="gc-panel">
+          <div className="gc-panel__header">
+            <div>
+              <span className="gc-eyebrow">SOURCE DE VÉRITÉ BACKEND</span>
+              <h2>{telemetryHealth?.ready ? "Télémétrie hydraulique prête" : "Télémétrie hydraulique incomplète"}</h2>
+            </div>
+            <StatusBadge
+              label={telemetryHealth?.fail_closed === false ? "READY" : "FAIL-CLOSED"}
+              tone={telemetryHealth?.fail_closed === false ? "success" : "warning"}
+            />
+          </div>
+
+          <p>
+            Chaque rôle est évalué côté backend à partir du mapping configuré, de la
+            présence réelle de la source, de la métrique attendue et de la fraîcheur
+            de la dernière mesure. L’interface ne recalcule plus ce diagnostic.
+          </p>
+
+          <div className="gc-table-wrap">
+            <table className="gc-table">
+              <thead>
+                <tr>
+                  <th>Rôle</th>
+                  <th>État</th>
+                  <th>Capteur configuré</th>
+                  <th>Valeur</th>
+                  <th>Âge</th>
+                  <th>Dernière mesure</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roleHealth.map(([roleName, role]) => {
+                  const state = role.state ?? "UNSET";
+                  return (
+                    <tr key={roleName}>
+                      <td>{ROLE_LABELS[roleName] ?? roleName}</td>
+                      <td>
+                        <StatusBadge
+                          label={STATE_LABELS[state]}
+                          tone={state === "OK" ? "success" : state === "STALE" ? "warning" : "danger"}
+                        />
+                      </td>
+                      <td>{role.sensor_name ?? "—"}</td>
+                      <td>{displayRoleValue(role)}</td>
+                      <td>{role.age_seconds === null || role.age_seconds === undefined ? "—" : `${Math.round(role.age_seconds)} s`}</td>
+                      <td>{displayDate(role.measured_at)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="gc-panel">
@@ -212,7 +347,7 @@ export default function TelemetryPage() {
               <h2>{homeAssistant ? `${readyRoles} / ${roleCount} rôles prêts` : "Bridge indisponible"}</h2>
             </div>
             <StatusBadge
-              label={homeAssistant?.telemetry_complete ? "6 RÔLES PRÊTS" : "FAIL-SAFE"}
+              label={homeAssistant?.telemetry_complete ? "BRIDGE COMPLET" : "FAIL-SAFE"}
               tone={homeAssistant?.telemetry_complete ? "success" : "warning"}
             />
           </div>
@@ -237,14 +372,14 @@ export default function TelemetryPage() {
               <dd>{homeAssistant?.hardware_control === false ? "Désactivé" : "Inconnu"}</dd>
             </div>
             <div>
-              <dt>Version bridge</dt>
-              <dd>{homeAssistant?.version ?? "—"}</dd>
+              <dt>Lecture backend</dt>
+              <dd>{telemetryHealth?.read_only === true && telemetryHealth?.database_write === false ? "Read-only" : "Inconnue"}</dd>
             </div>
           </dl>
 
           {missingRoles.length > 0 ? (
             <p>
-              Rôles absents : {missingRoles.map((role) => ROLE_LABELS[role] ?? role).join(", ")}.
+              Mesures absentes du snapshot Brain : {missingRoles.map((role) => ROLE_LABELS[role] ?? role).join(", ")}.
             </p>
           ) : null}
         </section>
@@ -252,8 +387,8 @@ export default function TelemetryPage() {
         <section className="gc-panel">
           <div className="gc-panel__header">
             <div>
-              <span className="gc-eyebrow">DIAGNOSTIC</span>
-              <h2>{upstreamEmpty ? "UPSTREAM_EMPTY" : "OBSERVED"}</h2>
+              <span className="gc-eyebrow">DIAGNOSTIC AMONT</span>
+              <h2>{telemetryHealth?.upstream_state ?? (upstreamEmpty ? "UPSTREAM_EMPTY" : "OBSERVED")}</h2>
             </div>
           </div>
 
@@ -265,8 +400,9 @@ export default function TelemetryPage() {
             </p>
           ) : (
             <p>
-              Des sources hydrauliques sont présentes. Leur identité physique doit
-              être confirmée avant toute affectation à un rôle GeoCooling.
+              Des sources hydrauliques sont présentes. Le tableau des rôles indique
+              désormais précisément si le blocage vient du mapping, de la source,
+              de la métrique ou de la fraîcheur de la donnée.
             </p>
           )}
 
@@ -280,12 +416,12 @@ export default function TelemetryPage() {
               <dd>{displayDate(discovery?.mqtt?.last_message_at)}</dd>
             </div>
             <div>
-              <dt>Topics MQTT</dt>
-              <dd>{discovery?.mqtt?.topic_count ?? 0}</dd>
+              <dt>Candidats hydrauliques</dt>
+              <dd>{telemetryHealth?.hydraulic_candidate_count ?? hydraulicCandidates.length}</dd>
             </div>
             <div>
-              <dt>Heartbeat</dt>
-              <dd>{discovery?.discovery?.heartbeat_topic_count ?? 0}</dd>
+              <dt>Commande hardware</dt>
+              <dd>{telemetryHealth?.hardware_touched === false ? "Aucune" : "Inconnue"}</dd>
             </div>
           </dl>
         </section>
