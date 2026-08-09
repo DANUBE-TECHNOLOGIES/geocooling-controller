@@ -9,11 +9,40 @@ printf '%s\n' " PASSIVE / READ-ONLY / NO RELAY COMMAND"
 printf '%s\n' "============================================================"
 
 TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
+DISCOVERY_TMP="$(mktemp)"
+trap 'rm -f "$TMP" "$DISCOVERY_TMP"' EXIT
 
 if ! curl -fsS --max-time 10 "$API_BASE/sensors/latest" -o "$TMP"; then
   echo "ERROR: cannot read $API_BASE/sensors/latest"
   exit 1
+fi
+
+printf '\n===== BACKEND MQTT DISCOVERY =====\n'
+if curl -fsS --max-time 10 "$API_BASE/geocooling/sensor-mqtt-discovery" -o "$DISCOVERY_TMP"; then
+  python3 - "$DISCOVERY_TMP" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text())
+mqtt = payload.get("mqtt") or {}
+discovery = payload.get("discovery") or {}
+print(f"running: {payload.get('running')}")
+print(f"passive_only: {payload.get('passive_only')}")
+print(f"mqtt_connected: {mqtt.get('connected')}")
+print(f"mqtt_message_count: {mqtt.get('message_count')}")
+print(f"mqtt_topic_count: {mqtt.get('topic_count')}")
+print(f"discovered_temperature_sensors: {discovery.get('sensor_count')}")
+print(f"heartbeat_topics: {discovery.get('heartbeat_topic_count')}")
+if mqtt.get("connected") and not mqtt.get("message_count"):
+    print("diagnosis: broker connected but no MQTT publication observed by GeoCooling")
+elif not mqtt.get("connected"):
+    print(f"diagnosis: MQTT discovery is not connected ({mqtt.get('connection_error')})")
+else:
+    print("diagnosis: MQTT traffic is reaching GeoCooling discovery")
+PY
+else
+  echo "WARNING: /geocooling/sensor-mqtt-discovery is unavailable"
 fi
 
 python3 - "$TMP" <<'PY'
