@@ -14,18 +14,23 @@ type BackendSnapshot = {
 
   device_ready: boolean | null;
   safety_safe: boolean | null;
+  safety_reason?: string | null;
+  dew_point_c?: number | null;
+  condensation_margin_c?: number | null;
 
   pump_running: boolean;
   valve_open: boolean;
 
   indoor_temperature_c: number | null;
   indoor_humidity_percent: number | null;
+  surface_temperature_c?: number | null;
 
   source_inlet_temperature_c: number | null;
   source_outlet_temperature_c: number | null;
 
   floor_supply_temperature_c: number | null;
   floor_return_temperature_c: number | null;
+  flow_rate_l_min?: number | null;
 
   brain_reason?: string;
   brain_confidence?: number;
@@ -97,6 +102,9 @@ export async function fetchGeoCoolingSnapshot(
     humidity:
       raw.indoor_humidity_percent,
 
+    surfaceTemperature:
+      raw.surface_temperature_c ?? null,
+
     sourceInTemperature:
       raw.source_inlet_temperature_c,
 
@@ -109,6 +117,15 @@ export async function fetchGeoCoolingSnapshot(
     returnTemperature:
       raw.floor_return_temperature_c,
 
+    flowRate:
+      raw.flow_rate_l_min ?? null,
+
+    dewPoint:
+      raw.dew_point_c ?? null,
+
+    condensationMargin:
+      raw.condensation_margin_c ?? null,
+
     pumpRunning:
       raw.pump_running,
 
@@ -120,6 +137,9 @@ export async function fetchGeoCoolingSnapshot(
 
     safetySafe:
       raw.safety_safe,
+
+    safetyReason:
+      raw.safety_reason ?? null,
 
     deviceReady:
       raw.device_ready,
