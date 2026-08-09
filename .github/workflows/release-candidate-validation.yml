@@ -1,0 +1,83 @@
+name: GeoCooling Release Candidate Validation
+
+on:
+  push:
+    branches:
+      - feature/geocooling-ui-v1
+  workflow_dispatch:
+
+jobs:
+  backend-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: RC1 RC2 RC3 regression
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest -q \
+            tests/test_rc1_architecture.py \
+            tests/test_rc1_pipeline.py \
+            tests/test_decision_context_v1.py \
+            tests/test_decision_context_builder_v1.py \
+            tests/test_decision_context_live_v1.py \
+            tests/test_scenario_engine_v1.py \
+            tests/test_scenario_engine_live_v1.py \
+            tests/test_rc3_architecture.py \
+            tests/test_rc3_shadow.py \
+            tests/test_rc3_live_shadow.py \
+            tests/test_weather_inertia_predictor.py \
+            tests/test_predictor_calibration.py \
+            tests/test_prediction_validation.py \
+            tests/test_validation_calibration_bridge.py
+
+      - name: F2 F3 F4 safety regression
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest -q \
+            tests/test_f2_controller_hydraulic_hardening.py \
+            tests/test_f3_thermal_fail_closed.py \
+            tests/test_f4_device_readiness.py \
+            tests/test_geocooling_c019_sequence.py \
+            tests/test_geocooling_waveshare_modbus_driver.py
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/geocooling-ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/geocooling-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
