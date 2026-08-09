@@ -49,6 +49,7 @@ type TelemetryRoleState = "UNSET" | "SOURCE_ABSENT" | "METRIC_ABSENT" | "STALE" 
 
 type TelemetryRoleHealth = {
   role?: string;
+  env_var?: string | null;
   sensor_name?: string | null;
   metric?: string;
   state?: TelemetryRoleState;
@@ -62,6 +63,12 @@ type TelemetryRoleHealth = {
   mqtt_topic?: string | null;
 };
 
+type TelemetryCandidate = {
+  sensor_name?: string;
+  metrics?: string[];
+  mqtt_topics?: string[];
+};
+
 type TelemetryHealth = {
   component?: string;
   ready?: boolean;
@@ -71,6 +78,9 @@ type TelemetryHealth = {
   observed_sensor_count?: number;
   hydraulic_candidate_count?: number;
   configured_role_count?: number;
+  auto_assignment_allowed?: boolean;
+  physical_confirmation_required?: boolean;
+  candidate_sensors?: TelemetryCandidate[];
   roles?: Record<string, TelemetryRoleHealth>;
   read_only?: boolean;
   hardware_touched?: boolean;
@@ -214,6 +224,7 @@ export default function TelemetryPage() {
     [telemetryHealth]
   );
 
+  const candidates = telemetryHealth?.candidate_sensors ?? [];
   const upstreamEmpty = telemetryHealth
     ? telemetryHealth.upstream_state === "UPSTREAM_EMPTY"
     : hydraulicCandidates.length === 0;
@@ -310,6 +321,7 @@ export default function TelemetryPage() {
                 <tr>
                   <th>Rôle</th>
                   <th>État</th>
+                  <th>Variable .env</th>
                   <th>Capteur configuré</th>
                   <th>Valeur</th>
                   <th>Âge</th>
@@ -328,6 +340,7 @@ export default function TelemetryPage() {
                           tone={state === "OK" ? "success" : state === "STALE" ? "warning" : "danger"}
                         />
                       </td>
+                      <td><code>{role.env_var ?? "—"}</code></td>
                       <td>{role.sensor_name ?? "—"}</td>
                       <td>{displayRoleValue(role)}</td>
                       <td>{role.age_seconds === null || role.age_seconds === undefined ? "—" : `${Math.round(role.age_seconds)} s`}</td>
@@ -338,6 +351,61 @@ export default function TelemetryPage() {
               </tbody>
             </table>
           </div>
+        </section>
+
+        <section className="gc-panel">
+          <div className="gc-panel__header">
+            <div>
+              <span className="gc-eyebrow">IDENTIFICATION PHYSIQUE</span>
+              <h2>{candidates.length} candidat{candidates.length === 1 ? "" : "s"} observé{candidates.length === 1 ? "" : "s"}</h2>
+            </div>
+            <StatusBadge
+              label={telemetryHealth?.physical_confirmation_required === true ? "CONFIRMATION OBLIGATOIRE" : "NON CERTIFIÉ"}
+              tone="warning"
+            />
+          </div>
+
+          <p>
+            GeoCooling n’affecte jamais automatiquement un capteur à un rôle physique.
+            Une température plausible ne suffit pas à distinguer départ, retour,
+            source ou surface. Chaque identité doit être confirmée sur l’installation.
+          </p>
+
+          <dl className="gc-definition-list">
+            <div>
+              <dt>Auto-affectation</dt>
+              <dd>{telemetryHealth?.auto_assignment_allowed === false ? "Interdite" : "Inconnue"}</dd>
+            </div>
+            <div>
+              <dt>Confirmation physique</dt>
+              <dd>{telemetryHealth?.physical_confirmation_required === true ? "Obligatoire" : "Inconnue"}</dd>
+            </div>
+          </dl>
+
+          {candidates.length > 0 ? (
+            <div className="gc-table-wrap">
+              <table className="gc-table">
+                <thead>
+                  <tr>
+                    <th>Capteur candidat</th>
+                    <th>Métriques</th>
+                    <th>Topics MQTT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((candidate) => (
+                    <tr key={candidate.sensor_name ?? JSON.stringify(candidate)}>
+                      <td>{candidate.sensor_name ?? "—"}</td>
+                      <td>{candidate.metrics?.join(", ") || "—"}</td>
+                      <td>{candidate.mqtt_topics?.join(", ") || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p>Aucun candidat hydraulique n’est encore visible sur MQTT.</p>
+          )}
         </section>
 
         <section className="gc-panel">
