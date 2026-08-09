@@ -77,6 +77,12 @@ const navigation: NavigationGroup[] = [
         icon: "◉",
       },
       {
+        href: "/telemetry",
+        label: "Télémétrie",
+        description: "ESPHome & MQTT",
+        icon: "≋",
+      },
+      {
         href: "/runtime",
         label: "Runtime",
         description: "Services & API",
