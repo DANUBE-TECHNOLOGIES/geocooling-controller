@@ -52,6 +52,24 @@ for sensor in sorted(by_sensor):
             f"{item['unit'] or '':6} topic={item['mqtt_topic']}"
         )
 
+print("\n===== UPSTREAM HEALTH =====")
+known_non_hydraulic = {"gc_temp_salon", "gc_temp_etage", "weather_outdoor"}
+hydraulic_candidates = sorted(
+    name
+    for name, metrics in by_sensor.items()
+    if name not in known_non_hydraulic
+    and ("temperature" in metrics or "flow" in metrics)
+)
+if not hydraulic_candidates:
+    print("state: UPSTREAM_EMPTY")
+    print("reason: no hydraulic/surface/flow telemetry is present in /sensors/latest")
+    print("action: diagnose WT32/ESPHome -> MQTT before assigning GeoCooling roles")
+else:
+    print("state: OBSERVED")
+    print(f"hydraulic_candidates: {len(hydraulic_candidates)}")
+    for sensor in hydraulic_candidates:
+        print(f"  candidate: {sensor}")
+
 print("\n===== CANDIDATES FOR GEOCOOLING =====")
 temperature_sensors = [
     name for name, metrics in by_sensor.items()
@@ -92,6 +110,7 @@ else:
 print("\n===== SAFETY NOTE =====")
 print("Do not auto-assign hydraulic roles only from temperature values.")
 print("Confirm each physical sensor before setting the corresponding .env variable.")
+print("If UPSTREAM_EMPTY is reported, fix WT32/ESPHome/MQTT first; mapping cannot solve it.")
 PY
 
 printf '\n%s\n' "============================================================"
