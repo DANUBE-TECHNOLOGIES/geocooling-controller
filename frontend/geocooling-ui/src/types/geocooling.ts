@@ -11,10 +11,15 @@ export type GeoCoolingSnapshot = {
   generatedAt: string | null;
   indoorTemperature: number | null;
   humidity: number | null;
+  surfaceTemperature: number | null;
   sourceInTemperature: number | null;
   sourceOutTemperature: number | null;
   supplyTemperature: number | null;
   returnTemperature: number | null;
+  flowRate: number | null;
+  dewPoint: number | null;
+  condensationMargin: number | null;
+  safetyReason: string | null;
   pumpRunning: boolean;
   valveOpen: boolean;
   mode: GeoCoolingMode;
