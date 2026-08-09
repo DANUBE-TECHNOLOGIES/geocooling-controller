@@ -57,6 +57,7 @@ jobs:
             tests/test_geocooling_c019_sequence.py \
             tests/test_geocooling_waveshare_modbus_driver.py \
             tests/test_geocooling_telemetry_health.py \
+            tests/test_telemetry_health_service.py \
             tests/test_safe_home_assistant_bridge.py
 
   frontend-build:
