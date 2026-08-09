@@ -67,8 +67,8 @@ export default function TelemetryPage() {
 
     try {
       const [discoveryResponse, sensorsResponse] = await Promise.all([
-        fetch("/api/backend/geocooling/sensor-mqtt-discovery", { cache: "no-store" }),
-        fetch("/api/backend/sensors/latest", { cache: "no-store" }),
+        fetch("/api/geocooling/sensor-mqtt-discovery", { cache: "no-store" }),
+        fetch("/api/sensors/latest", { cache: "no-store" }),
       ]);
 
       if (!discoveryResponse.ok) {
