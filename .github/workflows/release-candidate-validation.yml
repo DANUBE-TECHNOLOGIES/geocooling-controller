@@ -60,6 +60,12 @@ jobs:
             tests/test_telemetry_health_service.py \
             tests/test_safe_home_assistant_bridge.py
 
+      - name: Passive audit script syntax
+        run: |
+          bash -n ../scripts/audit/geocooling-telemetry-mapping.sh
+          bash -n ../scripts/audit/geocooling-esphome-mqtt-diagnostic.sh
+          bash -n ../scripts/audit/geocooling-physical-sensor-identification.sh
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
