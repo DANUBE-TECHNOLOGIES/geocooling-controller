@@ -27,9 +27,11 @@ def test_unset_role_is_fail_closed():
         metric="temperature",
         rows=[],
         now=NOW,
+        env_var="GEOCOOLING_SURFACE_SENSOR",
     )
     assert result["state"] == "UNSET"
     assert result["ready"] is False
+    assert result["env_var"] == "GEOCOOLING_SURFACE_SENSOR"
 
 
 def test_configured_but_never_observed_is_source_absent():
@@ -103,6 +105,40 @@ def test_current_site_observation_is_reported_upstream_empty():
     assert result["ready"] is False
     assert result["fail_closed"] is True
     assert result["hydraulic_candidate_count"] == 0
+    assert result["candidate_sensors"] == []
+    assert result["auto_assignment_allowed"] is False
+    assert result["physical_confirmation_required"] is True
+
+
+def test_candidates_are_exposed_without_role_assignment():
+    rows = [
+        row("probe_a", value=18.1),
+        row("probe_b", value=20.2),
+        row("flow_meter", metric="flow", value=28.0),
+        row("gc_temp_salon", value=26.4),
+    ]
+    result = build_telemetry_health(rows, mappings={}, now=NOW)
+
+    assert result["upstream_state"] == "OBSERVED"
+    assert result["hydraulic_candidate_count"] == 3
+    assert result["candidate_sensors"] == [
+        {
+            "sensor_name": "flow_meter",
+            "metrics": ["flow"],
+            "mqtt_topics": ["geocooling/flow_meter/flow"],
+        },
+        {
+            "sensor_name": "probe_a",
+            "metrics": ["temperature"],
+            "mqtt_topics": ["geocooling/probe_a/temperature"],
+        },
+        {
+            "sensor_name": "probe_b",
+            "metrics": ["temperature"],
+            "mqtt_topics": ["geocooling/probe_b/temperature"],
+        },
+    ]
+    assert all(role["state"] == "UNSET" for role in result["roles"].values())
 
 
 def test_all_six_roles_can_be_ready():
@@ -126,3 +162,5 @@ def test_all_six_roles_can_be_ready():
     assert result["upstream_state"] == "OBSERVED"
     assert result["ready"] is True
     assert all(item["state"] == "OK" for item in result["roles"].values())
+    assert result["roles"]["surface"]["env_var"] == "GEOCOOLING_SURFACE_SENSOR"
+    assert result["roles"]["flow"]["env_var"] == "GEOCOOLING_FLOW_SENSOR"
