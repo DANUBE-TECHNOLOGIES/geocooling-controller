@@ -92,6 +92,10 @@ export function normalizeSnapshot(input: unknown): GeoCoolingSnapshot {
       asNumber(raw.indoor_humidity_percent) ??
       asNumber(raw.humidity),
 
+    surfaceTemperature:
+      asNumber(raw.surface_temperature_c) ??
+      asNumber(raw.surfaceTemperature),
+
     sourceInTemperature:
       asNumber(raw.source_inlet_temperature_c) ??
       asNumber(raw.sourceInTemperature),
@@ -107,6 +111,22 @@ export function normalizeSnapshot(input: unknown): GeoCoolingSnapshot {
     returnTemperature:
       asNumber(raw.floor_return_temperature_c) ??
       asNumber(raw.returnTemperature),
+
+    flowRate:
+      asNumber(raw.flow_rate_l_min) ??
+      asNumber(raw.flowRate),
+
+    dewPoint:
+      asNumber(raw.dew_point_c) ??
+      asNumber(raw.dewPoint),
+
+    condensationMargin:
+      asNumber(raw.condensation_margin_c) ??
+      asNumber(raw.condensationMargin),
+
+    safetyReason:
+      asString(raw.safety_reason) ??
+      asString(raw.safetyReason),
 
     pumpRunning:
       asBoolean(raw.pump_running) ??
