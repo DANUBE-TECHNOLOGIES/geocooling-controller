@@ -1,7 +1,7 @@
 """GeoCooling telemetry-role health classification.
 
 Pure read-only helpers used to distinguish configuration errors from upstream
-sensor/metric loss.  This module never publishes MQTT messages and never
+sensor/metric loss. This module never publishes MQTT messages and never
 commands any actuator.
 """
 
@@ -37,6 +37,12 @@ ROLE_SPECS: dict[str, dict[str, str]] = {
         "env": "GEOCOOLING_FLOW_SENSOR",
         "metric": "flow",
     },
+}
+
+NON_HYDRAULIC_SENSORS = {
+    "gc_temp_salon",
+    "gc_temp_etage",
+    "weather_outdoor",
 }
 
 
@@ -76,6 +82,7 @@ def classify_role(
     rows: Sequence[Mapping[str, Any]],
     stale_seconds: int = 120,
     now: datetime | None = None,
+    env_var: str | None = None,
 ) -> dict[str, Any]:
     """Classify one role as UNSET/SOURCE_ABSENT/METRIC_ABSENT/STALE/OK."""
 
@@ -84,6 +91,7 @@ def classify_role(
 
     base = {
         "role": role,
+        "env_var": env_var,
         "sensor_name": configured_sensor or None,
         "metric": metric,
         "stale_seconds": int(stale_seconds),
@@ -162,6 +170,50 @@ def classify_role(
     }
 
 
+def _candidate_sensors(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return observed hydraulic candidates without assigning a physical role."""
+
+    candidates: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        sensor_name = str(row.get("sensor_name") or "").strip()
+        metric = str(row.get("metric") or "").strip()
+
+        if (
+            not sensor_name
+            or sensor_name in NON_HYDRAULIC_SENSORS
+            or metric not in {"temperature", "flow"}
+        ):
+            continue
+
+        item = candidates.setdefault(
+            sensor_name,
+            {
+                "sensor_name": sensor_name,
+                "metrics": set(),
+                "mqtt_topics": set(),
+            },
+        )
+        item["metrics"].add(metric)
+        topic = str(row.get("mqtt_topic") or "").strip()
+        if topic:
+            item["mqtt_topics"].add(topic)
+
+    return [
+        {
+            "sensor_name": item["sensor_name"],
+            "metrics": sorted(item["metrics"]),
+            "mqtt_topics": sorted(item["mqtt_topics"]),
+        }
+        for item in sorted(
+            candidates.values(),
+            key=lambda value: value["sensor_name"],
+        )
+    ]
+
+
 def build_telemetry_health(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -192,6 +244,7 @@ def build_telemetry_health(
             rows=rows,
             stale_seconds=threshold,
             now=now,
+            env_var=spec["env"],
         )
 
     observed_sensors = sorted(
@@ -201,25 +254,14 @@ def build_telemetry_health(
             if str(row.get("sensor_name") or "").strip()
         }
     )
-    hydraulic_candidates = sorted(
-        {
-            str(row.get("sensor_name") or "").strip()
-            for row in rows
-            if str(row.get("metric") or "").strip() in {"temperature", "flow"}
-            and str(row.get("sensor_name") or "").strip()
-            not in {"gc_temp_salon", "gc_temp_etage", "weather_outdoor"}
-        }
-    )
+    candidates = _candidate_sensors(rows)
 
     all_ready = all(result["ready"] for result in role_results.values())
     configured_count = sum(
         1 for result in role_results.values() if result["state"] != "UNSET"
     )
 
-    if not hydraulic_candidates:
-        upstream_state = "UPSTREAM_EMPTY"
-    else:
-        upstream_state = "OBSERVED"
+    upstream_state = "OBSERVED" if candidates else "UPSTREAM_EMPTY"
 
     return {
         "component": "geocooling_telemetry_health",
@@ -228,7 +270,10 @@ def build_telemetry_health(
         "stale_seconds": threshold,
         "upstream_state": upstream_state,
         "observed_sensor_count": len(observed_sensors),
-        "hydraulic_candidate_count": len(hydraulic_candidates),
+        "hydraulic_candidate_count": len(candidates),
         "configured_role_count": configured_count,
+        "auto_assignment_allowed": False,
+        "physical_confirmation_required": True,
+        "candidate_sensors": candidates,
         "roles": role_results,
     }
