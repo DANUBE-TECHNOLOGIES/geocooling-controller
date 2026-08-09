@@ -1,10 +1,12 @@
 # GeoCooling — Finalization audit
 
-Date: 2026-08-08
+Date: 2026-08-09
 
 ## Release candidate baseline
 
 Current reference branch: `feature/geocooling-ui-v1`.
+
+GitHub is now the source of truth for RC1, RC2, RC3, F2, F3 and F4 code. Runtime-specific `.env` configuration is local and not versioned.
 
 ## Confirmed physical topology
 
@@ -13,20 +15,35 @@ The installation uses **two logical outputs** on the Waveshare controller:
 - **EV** — electrovalve.
 - **M11 + M13** — both circulators are commanded together by the same actuator/output.
 
-Therefore the existing `valve + pump` software model already matches the real installation topology. No third independent relay is required.
+Therefore the existing `valve + pump` software model matches the real installation topology. No third independent relay is required.
+
+## Validation already completed
+
+- Waveshare Modbus reachable on the deployed controller.
+- Read-only relay status confirmed all eight relays OFF during commissioning baseline.
+- Hardware kept DISARMED.
+- Real hydraulic sequence kept disabled.
+- Autonomous real-driver execution kept disabled.
+- Backend rebuilt from the consolidated GitHub source and returned healthy.
+- Runtime route validation for the consolidated RC1/RC2/RC3 stack completed.
+- Focused RC1, RC2, RC3, F2, F3 and F4 regression groups were executed successfully during integration.
+- Gate A / Gate B software and safe-state baseline completed.
 
 ## Remaining blocking gaps before real autonomous operation
 
-1. **F2 hydraulic hardening is code-complete but still requires executed regression and field certification.**
-   START now requires `OFF`, `FAULT` and `EMERGENCY_STOP` require an explicit reset, thermal safety is re-checked immediately before M11+M13 are energized, and failure paths force a deterministic in-memory `FAULT` after best-effort hardware rollback.
+1. **Physical actuator certification is deferred until wiring is complete.**
+   EV and M11+M13 are not yet connected to their final actuators. Gate C/D/G physical commissioning therefore remains pending.
 
-2. **F3 condensation fail-closed is code-complete but still requires executed regression and field certification.**
-   Real drivers now require a fresh thermal snapshot containing indoor temperature, indoor humidity and floor-surface temperature. Missing, invalid or stale data blocks START and becomes unsafe during RUNNING.
+2. **Surface-temperature mapping is still missing in the deployed telemetry.**
+   F3 correctly remains fail-closed without a fresh floor-surface temperature. `GEOCOOLING_SURFACE_SENSOR` must be mapped to the confirmed physical sensor before START can be certified.
 
-3. **Hardware readiness and certification must explicitly document EV + M11/M13.**
-   Readiness and dry-run can retain their two-output model, but labels and certification criteria must reflect the real hydraulic wiring.
+3. **Hydraulic telemetry mapping must be completed.**
+   Floor supply/return, source inlet/outlet and flow are supported by the thermal engine but depend on explicit sensor mappings. See `docs/TELEMETRY-MAPPING.md` and `scripts/audit/geocooling-telemetry-mapping.sh`.
 
-4. **Autonomous real-driver execution must remain disabled until field certification passes.**
+4. **Home Assistant/UI must be validated with the completed telemetry.**
+   The frontend snapshot model now exposes surface temperature, flow rate, dew point, condensation margin and safety reason in addition to the existing hydraulic temperatures.
+
+5. **Autonomous real-driver execution must remain disabled until field certification passes.**
    `GEOCOOLING_AUTOPILOT_ALLOW_REAL_DRIVER` must remain false throughout finalization and commissioning.
 
 ## Closure sprints
@@ -37,33 +54,33 @@ Therefore the existing `valve + pump` software model already matches the real in
 - Fail-safe state remains: M11+M13 OFF, then EV CLOSED.
 - No third actuator implementation required.
 
-### F2 — Certified hydraulic sequence — CODE COMPLETE / CERTIFICATION PENDING
-- START sequence retained: EV OPEN -> feedback -> delay -> M11+M13 ON -> feedback -> RUNNING.
-- STOP sequence retained: M11+M13 OFF -> feedback -> delay -> EV CLOSED -> feedback -> OFF.
+### F2 — Certified hydraulic sequence — CODE + REGRESSION COMPLETE / FIELD CERTIFICATION PENDING
+- START sequence: EV OPEN -> feedback -> delay -> M11+M13 ON -> feedback -> RUNNING.
+- STOP sequence: M11+M13 OFF -> feedback -> delay -> EV CLOSED -> feedback -> OFF.
 - START is rejected from `FAULT` and `EMERGENCY_STOP`; explicit reset required.
-- Controller lock is retained through the final START delegation to close the OFF-to-FAULT race window.
 - Thermal safety is re-evaluated immediately before M11+M13 is energized.
 - Fault handling performs best-effort safe rollback and forces deterministic `FAULT` state even if rollback telemetry/persistence also fails.
-- Focused regression tests added in `backend/tests/test_f2_controller_hydraulic_hardening.py` plus existing C019/Waveshare tests.
-- GitHub Actions workflow added for the F2/F3 regression suite, but no run is currently visible through the connected GitHub integration; executed validation remains pending.
+- Focused regression tests executed successfully during consolidation.
+- Physical execution remains pending final actuator wiring.
 
-### F3 — Thermal safety fail-closed — CODE COMPLETE / CERTIFICATION PENDING
+### F3 — Thermal safety fail-closed — CODE + REGRESSION COMPLETE / SENSOR MAPPING PENDING
 - Non-simulation drivers require a real thermal snapshot.
 - Indoor temperature, indoor humidity and surface temperature are mandatory.
 - Thermal freshness is enforced with `GEOCOOLING_THERMAL_MAX_AGE_SECONDS` (default 180 s, minimum 5 s).
-- Missing, invalid, future-skewed or stale data returns an unsafe decision and blocks START.
-- Dew-point margin continues to be evaluated by `GeoCoolingSafetyManager` once data is complete and fresh.
-- During RUNNING, sensor loss/staleness or condensation risk enters the existing safe STOP sequence.
-- Focused regression tests added in `backend/tests/test_f3_thermal_fail_closed.py`.
-- Executed regression and physical validation remain pending.
+- Missing, invalid, future-skewed or stale data blocks START and becomes unsafe during RUNNING.
+- Dew-point margin is evaluated only when data is complete and fresh.
+- Focused regression tests executed successfully during consolidation.
+- Current deployed blocker: floor-surface sensor mapping not yet configured.
 
 ### F4 — Field certification and release — IN PROGRESS
-- Update readiness terminology for EV + M11/M13.
-- Physical relay-by-relay commissioning with autonomous mode disabled.
-- Validate Home Assistant live telemetry and UI states.
-- Run complete regression suite.
-- Merge release candidate to `main` only after field certification passes.
+- Readiness terminology updated for EV + M11/M13.
+- Gate A/B baseline completed with real Waveshare connected and disarmed.
+- Telemetry mapping contract/documentation added.
+- Frontend thermal-safety snapshot contract expanded.
+- Gate C/D/G physical actuator commissioning deferred until EV and M11/M13 are wired.
+- Home Assistant/UI live validation remains pending completed telemetry.
+- Merge to `main` remains forbidden until all physical certification gates pass.
 
 ## Release rule
 
-No new Brain, Digital Twin, prediction or UI feature work until F2–F4 are closed. The objective is operational completion and safety certification, not feature expansion.
+No new Brain, Digital Twin, prediction or unrelated UI feature work until F2–F4 are closed. The objective is operational completion and safety certification, not feature expansion.
