@@ -1,7 +1,9 @@
 import type {
-    GeoCoolingSnapshot,
     GeoCoolingState
 } from "../types/state";
+import type {
+    GeoCoolingSnapshot
+} from "@/types/geocooling";
 
 export type Action=
 
