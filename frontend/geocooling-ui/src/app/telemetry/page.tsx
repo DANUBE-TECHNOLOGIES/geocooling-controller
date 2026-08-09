@@ -32,11 +32,33 @@ type LatestSensor = {
   mqtt_topic?: string | null;
 };
 
+type HomeAssistantState = {
+  version?: string;
+  available?: boolean;
+  advisory_only?: boolean;
+  decision_authority?: boolean;
+  hardware_control?: boolean;
+  fail_safe_missing_values?: boolean;
+  telemetry_complete?: boolean;
+  hydraulic_role_count?: number;
+  hydraulic_roles_ready?: number;
+  missing_measurements?: string[];
+};
+
 const KNOWN_NON_HYDRAULIC = new Set([
   "gc_temp_salon",
   "gc_temp_etage",
   "weather_outdoor",
 ]);
+
+const ROLE_LABELS: Record<string, string> = {
+  floor_surface_temperature_c: "Surface plancher",
+  floor_supply_temperature_c: "Départ plancher",
+  floor_return_temperature_c: "Retour plancher",
+  source_inlet_temperature_c: "Entrée source",
+  source_outlet_temperature_c: "Sortie source",
+  flow_rate_l_min: "Débit hydraulique",
+};
 
 function displayDate(value?: string | null): string {
   if (!value) return "—";
@@ -58,6 +80,7 @@ export default function TelemetryPage() {
 
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const [rows, setRows] = useState<LatestSensor[]>([]);
+  const [homeAssistant, setHomeAssistant] = useState<HomeAssistantState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -66,10 +89,14 @@ export default function TelemetryPage() {
     setError(null);
 
     try {
-      const [discoveryResponse, sensorsResponse] = await Promise.all([
-        fetch("/api/geocooling/sensor-mqtt-discovery", { cache: "no-store" }),
-        fetch("/api/sensors/latest", { cache: "no-store" }),
-      ]);
+      const [discoveryResponse, sensorsResponse, homeAssistantResponse] =
+        await Promise.all([
+          fetch("/api/geocooling/sensor-mqtt-discovery", { cache: "no-store" }),
+          fetch("/api/sensors/latest", { cache: "no-store" }),
+          fetch("/api/geocooling/brain-v2/integration/home-assistant/state", {
+            cache: "no-store",
+          }),
+        ]);
 
       if (!discoveryResponse.ok) {
         throw new Error(`Discovery HTTP ${discoveryResponse.status}`);
@@ -81,6 +108,12 @@ export default function TelemetryPage() {
       setDiscovery((await discoveryResponse.json()) as DiscoveryStatus);
       const payload = await sensorsResponse.json();
       setRows(Array.isArray(payload) ? (payload as LatestSensor[]) : []);
+
+      if (homeAssistantResponse.ok) {
+        setHomeAssistant((await homeAssistantResponse.json()) as HomeAssistantState);
+      } else {
+        setHomeAssistant(null);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Erreur télémétrie");
     } finally {
@@ -113,6 +146,9 @@ export default function TelemetryPage() {
   const upstreamEmpty = hydraulicCandidates.length === 0;
   const mqttConnected = discovery?.mqtt?.connected === true;
   const messageCount = discovery?.mqtt?.message_count ?? 0;
+  const missingRoles = homeAssistant?.missing_measurements ?? [];
+  const readyRoles = homeAssistant?.hydraulic_roles_ready ?? 0;
+  const roleCount = homeAssistant?.hydraulic_role_count ?? 6;
 
   const refreshAll = useCallback(() => {
     refresh();
@@ -167,6 +203,50 @@ export default function TelemetryPage() {
             <h2>{hydraulicCandidates.length}</h2>
             <p>Candidats surface / températures hydrauliques / débit.</p>
           </article>
+        </section>
+
+        <section className="gc-panel">
+          <div className="gc-panel__header">
+            <div>
+              <span className="gc-eyebrow">HOME ASSISTANT</span>
+              <h2>{homeAssistant ? `${readyRoles} / ${roleCount} rôles prêts` : "Bridge indisponible"}</h2>
+            </div>
+            <StatusBadge
+              label={homeAssistant?.telemetry_complete ? "6 RÔLES PRÊTS" : "FAIL-SAFE"}
+              tone={homeAssistant?.telemetry_complete ? "success" : "warning"}
+            />
+          </div>
+
+          <p>
+            Le bridge reste en conseil uniquement et ne possède aucune autorité
+            de commande. Les mesures absentes restent inconnues : elles ne sont
+            jamais converties artificiellement à zéro.
+          </p>
+
+          <dl className="gc-definition-list">
+            <div>
+              <dt>Valeurs manquantes fail-safe</dt>
+              <dd>{homeAssistant?.fail_safe_missing_values === true ? "Actif" : "Inconnu"}</dd>
+            </div>
+            <div>
+              <dt>Autorité décisionnelle</dt>
+              <dd>{homeAssistant?.decision_authority === false ? "Aucune" : "Inconnue"}</dd>
+            </div>
+            <div>
+              <dt>Contrôle hardware</dt>
+              <dd>{homeAssistant?.hardware_control === false ? "Désactivé" : "Inconnu"}</dd>
+            </div>
+            <div>
+              <dt>Version bridge</dt>
+              <dd>{homeAssistant?.version ?? "—"}</dd>
+            </div>
+          </dl>
+
+          {missingRoles.length > 0 ? (
+            <p>
+              Rôles absents : {missingRoles.map((role) => ROLE_LABELS[role] ?? role).join(", ")}.
+            </p>
+          ) : null}
         </section>
 
         <section className="gc-panel">
