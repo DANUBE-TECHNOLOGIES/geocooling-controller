@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from fastapi.responses import PlainTextResponse
 
-from app.geocooling.brain_v2.integration.home_assistant_bridge import (
-    HomeAssistantBridge,
+from app.geocooling.brain_v2.integration.safe_home_assistant_bridge import (
+    SafeHomeAssistantBridge,
 )
 
 
@@ -13,7 +13,7 @@ router = APIRouter(
     tags=["geocooling-brain-v2-home-assistant"],
 )
 
-bridge = HomeAssistantBridge()
+bridge = SafeHomeAssistantBridge()
 
 
 @router.get("/status")
