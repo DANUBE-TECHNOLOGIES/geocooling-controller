@@ -6,6 +6,7 @@ from fastapi.responses import PlainTextResponse
 from app.geocooling.brain_v2.integration.safe_home_assistant_bridge import (
     SafeHomeAssistantBridge,
 )
+from app.geocooling.telemetry_health_service import TelemetryHealthService
 
 
 router = APIRouter(
@@ -24,6 +25,11 @@ def get_home_assistant_bridge_status() -> dict:
 @router.get("/state")
 def get_home_assistant_state() -> dict:
     return bridge.state()
+
+
+@router.get("/telemetry-health")
+def get_home_assistant_telemetry_health() -> dict:
+    return TelemetryHealthService().health()
 
 
 @router.get(
