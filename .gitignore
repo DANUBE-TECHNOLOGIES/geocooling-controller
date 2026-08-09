@@ -41,3 +41,19 @@ node_modules/
 dist/
 build/
 coverage/
+
+# GeoCooling runtime / commissioning outputs
+decision-journal/
+rc3-prediction-journal/
+field-tests/campaign-*/
+audits/*/
+audits/latest
+audits/dependency-latest
+
+# Runtime control files
+*.pid
+.active-session
+
+# Generated frontend backups
+frontend/**/*.bak.*
+frontend/**/*.backup.*

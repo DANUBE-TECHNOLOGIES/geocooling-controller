@@ -1819,6 +1819,7 @@ from app.geocooling.api import (
     controller as geocooling_controller,
     router as geocooling_router,
 )
+from app.geocooling.weather.router import router as geocooling_weather_router
 
 automation_service = AutomationService(
     engine=engine,
@@ -1834,3 +1835,38 @@ app.include_router(devices_router)
 app.include_router(events_router)
 app.include_router(automation_router)
 app.include_router(rules_router)
+
+app.include_router(geocooling_weather_router)
+
+from app.geocooling.rc1_router import router as geocooling_rc1_router
+app.include_router(geocooling_rc1_router)
+
+from app.geocooling.decision_context_router_v1 import router as geocooling_decision_context_router
+app.include_router(geocooling_decision_context_router)
+
+from app.geocooling.decision_context_live_router_v1 import router as geocooling_decision_context_live_router
+app.include_router(geocooling_decision_context_live_router)
+
+from app.geocooling.scenario_engine_router_v1 import router as geocooling_scenario_engine_router
+app.include_router(geocooling_scenario_engine_router)
+
+from app.geocooling.scenario_engine_live_router_v1 import router as geocooling_scenario_engine_live_router
+app.include_router(geocooling_scenario_engine_live_router)
+
+from app.geocooling.rc3.router import router as geocooling_rc3_router
+app.include_router(geocooling_rc3_router)
+
+from app.geocooling.rc3.live_shadow_router import router as geocooling_rc3_live_shadow_router
+app.include_router(geocooling_rc3_live_shadow_router)
+
+from app.geocooling.rc3.weather_inertia_router import router as geocooling_rc3_weather_inertia_router
+app.include_router(geocooling_rc3_weather_inertia_router)
+
+from app.geocooling.rc3.predictor_calibration_router import router as geocooling_rc3_calibration_router
+app.include_router(geocooling_rc3_calibration_router)
+
+from app.geocooling.rc3.prediction_validation_router import router as geocooling_rc3_prediction_validation_router
+app.include_router(geocooling_rc3_prediction_validation_router)
+
+from app.geocooling.rc3.validation_calibration_bridge_router import router as geocooling_rc3_learning_router
+app.include_router(geocooling_rc3_learning_router)
