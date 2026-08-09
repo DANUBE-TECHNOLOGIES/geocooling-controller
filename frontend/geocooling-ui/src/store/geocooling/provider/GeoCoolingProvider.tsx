@@ -17,6 +17,18 @@ import { normalizeSnapshot } from "../utils/normalizer";
 
 const REFRESH_DELAY = 5000;
 
+function errorMessage(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    if (typeof error === "string") {
+        return error;
+    }
+
+    return "Erreur GeoCooling inconnue";
+}
+
 export function GeoCoolingProvider({
     children,
 }: {
@@ -69,11 +81,11 @@ export function GeoCoolingProvider({
                 )
             });
 
-        } catch (e: any) {
+        } catch (error: unknown) {
 
             dispatch({
                 type: "ERROR",
-                error: e.message
+                error: errorMessage(error)
             });
 
         } finally {
