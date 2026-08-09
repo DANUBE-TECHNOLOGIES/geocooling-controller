@@ -138,7 +138,7 @@ export default function TelemetryPage() {
           </div>
           <StatusBadge
             label={upstreamEmpty ? "AMONT ABSENT" : "TÉLÉMÉTRIE OBSERVÉE"}
-            tone={upstreamEmpty ? "critical" : "good"}
+            tone={upstreamEmpty ? "danger" : "success"}
           />
         </header>
 
