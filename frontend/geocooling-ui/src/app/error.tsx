@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 
 type ErrorPageProps = {
@@ -71,9 +72,9 @@ export default function ErrorPage({
             Réessayer
           </button>
 
-          <a href="/">
+          <Link href="/">
             Retour au dashboard
-          </a>
+          </Link>
         </div>
       </section>
     </main>
