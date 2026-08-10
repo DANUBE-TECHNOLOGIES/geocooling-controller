@@ -59,6 +59,7 @@ def bare_controller(state=GeoCoolingState.OFF):
     controller.last_reason = "test"
     controller.last_error = None
     controller.stopped_at = None
+    controller.driver_name = "simulation"
     controller.driver = TrackingDriver()
     controller.status = lambda: {"state": controller.state.value}
     return controller
@@ -82,6 +83,39 @@ def test_start_is_rejected_from_emergency_stop_until_explicit_reset():
     assert result["accepted"] is False
     assert "reset explicite" in result["message"]
     assert controller.state == GeoCoolingState.EMERGENCY_STOP
+
+
+def test_real_hardware_start_is_rejected_before_any_actuation_when_commissioning_not_ready():
+    controller = bare_controller(GeoCoolingState.OFF)
+    controller.driver_name = "waveshare_modbus"
+    controller._commissioning_readiness = lambda: {
+        "stage": "IDENTIFICATION_REQUIRED",
+        "ready_for_release": False,
+        "next_action": "Confirm physical sensor identity before assigning mappings.",
+        "read_only": True,
+        "hardware_touched": False,
+    }
+
+    result = controller.request_start()
+
+    assert result["accepted"] is False
+    assert "Commissioning Gate" in result["message"]
+    assert result["commissioning_readiness"]["stage"] == "IDENTIFICATION_REQUIRED"
+    assert controller.driver.valve_open is False
+    assert controller.driver.pump_running is False
+    assert controller.driver.start_pump_calls == 0
+    assert controller.state == GeoCoolingState.OFF
+
+
+def test_simulation_commissioning_readiness_is_non_blocking_and_read_only():
+    controller = bare_controller(GeoCoolingState.OFF)
+
+    readiness = controller._commissioning_readiness()
+
+    assert readiness["stage"] == "SIMULATION"
+    assert readiness["ready_for_release"] is True
+    assert readiness["read_only"] is True
+    assert readiness["hardware_touched"] is False
 
 
 def test_thermal_safety_is_rechecked_before_m11_m13_start():
