@@ -23,6 +23,7 @@ from app.geocooling.controller_base import (
     utc_now,
 )
 from app.geocooling.models import GeoCoolingState
+from app.geocooling.surface_estimation import estimate_floor_surface_temperature
 from app.geocooling.telemetry_health_service import TelemetryHealthService
 
 logger = logging.getLogger("sbc.geocooling")
@@ -76,6 +77,40 @@ class GeoCoolingController(_BaseGeoCoolingController):
                 "Échec de persistance de l'état FAULT; état mémoire forcé."
             )
 
+    @staticmethod
+    def _surface_reference(latest) -> tuple[float | None, dict[str, object]]:
+        """Resolve measured or explicitly enabled conservative surface reference."""
+
+        if latest.surface_temperature_c is not None:
+            return latest.surface_temperature_c, {
+                "surface_reference_mode": "sensor",
+                "surface_estimated": False,
+                "surface_estimation": None,
+            }
+
+        mode = os.getenv(
+            "GEOCOOLING_SURFACE_REFERENCE_MODE",
+            "sensor",
+        ).strip().lower()
+
+        if mode not in {"floor_loop_estimate", "floor_supply_proxy"}:
+            return None, {
+                "surface_reference_mode": mode or "sensor",
+                "surface_estimated": False,
+                "surface_estimation": None,
+            }
+
+        estimate = estimate_floor_surface_temperature(
+            latest.floor_supply_temperature_c,
+            latest.floor_return_temperature_c,
+        )
+        payload = estimate.as_dict()
+        return estimate.temperature_c, {
+            "surface_reference_mode": "floor_loop_estimate",
+            "surface_estimated": bool(estimate.available),
+            "surface_estimation": payload,
+        }
+
     def _thermal_safety(self) -> dict[str, object]:
         """Fail closed on real hardware when thermal telemetry is unusable."""
 
@@ -102,6 +137,9 @@ class GeoCoolingController(_BaseGeoCoolingController):
             "fresh": False,
             "data_age_seconds": None,
             "maximum_age_seconds": maximum_age_seconds,
+            "surface_reference_mode": "sensor",
+            "surface_estimated": False,
+            "surface_estimation": None,
         }
 
         if latest is None:
@@ -115,10 +153,13 @@ class GeoCoolingController(_BaseGeoCoolingController):
                 ),
             }
 
+        surface_temperature_c, surface_meta = self._surface_reference(latest)
+        base_payload.update(surface_meta)
+
         required_values = {
             "température intérieure": latest.indoor_temperature_c,
             "humidité intérieure": latest.indoor_humidity_percent,
-            "température de surface": latest.surface_temperature_c,
+            "référence de surface": surface_temperature_c,
         }
         missing = [
             label
@@ -176,11 +217,12 @@ class GeoCoolingController(_BaseGeoCoolingController):
         decision = self.safety_manager.evaluate(
             indoor_temperature_c=latest.indoor_temperature_c,
             indoor_humidity_percent=latest.indoor_humidity_percent,
-            surface_temperature_c=latest.surface_temperature_c,
+            surface_temperature_c=surface_temperature_c,
         ).as_dict()
 
         decision.update(
             {
+                **surface_meta,
                 "required": True,
                 "fresh": True,
                 "data_age_seconds": round(age_seconds, 3),
@@ -199,7 +241,7 @@ class GeoCoolingController(_BaseGeoCoolingController):
 
         if self.driver_name == "simulation":
             return {
-                "stage": "SIMULATION",
+                "state": "SIMULATION",
                 "ready_for_release": True,
                 "read_only": True,
                 "hardware_touched": False,
@@ -221,7 +263,7 @@ class GeoCoolingController(_BaseGeoCoolingController):
             )
             return {
                 "component": "geocooling_commissioning_readiness",
-                "stage": "UPSTREAM_NOT_READY",
+                "state": "UPSTREAM_NOT_READY",
                 "ready_for_release": False,
                 "next_action": "Restore commissioning readiness diagnostics before real hardware START.",
                 "reason": f"Commissioning readiness unavailable: {exc}",
@@ -265,13 +307,13 @@ class GeoCoolingController(_BaseGeoCoolingController):
 
             readiness = self._commissioning_readiness()
             if not bool(readiness.get("ready_for_release", False)):
-                stage = str(readiness.get("stage", "UNKNOWN"))
+                state = str(readiness.get("state", "UNKNOWN"))
                 next_action = str(readiness.get("next_action", "Complete commissioning."))
                 return {
                     "accepted": False,
                     "message": (
                         "Démarrage réel refusé par le Commissioning Gate "
-                        f"({stage}) : {next_action}"
+                        f"({state}) : {next_action}"
                     ),
                     "commissioning_readiness": readiness,
                     "status": self.status(),
