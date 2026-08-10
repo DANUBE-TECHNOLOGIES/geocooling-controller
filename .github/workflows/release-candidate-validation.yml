@@ -58,6 +58,7 @@ jobs:
             tests/test_geocooling_waveshare_modbus_driver.py \
             tests/test_geocooling_telemetry_health.py \
             tests/test_telemetry_health_service.py \
+            tests/test_surface_estimation.py \
             tests/test_esphome_native_bridge.py \
             tests/test_commissioning_readiness.py \
             tests/test_hardware_activation_policy.py \
