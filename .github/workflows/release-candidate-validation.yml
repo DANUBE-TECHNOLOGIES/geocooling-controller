@@ -42,6 +42,7 @@ jobs:
             tests/test_rc3_shadow.py \
             tests/test_rc3_live_shadow.py \
             tests/test_weather_inertia_predictor.py \
+            tests/test_weather_inertia_live_integration.py \
             tests/test_predictor_calibration.py \
             tests/test_prediction_validation.py \
             tests/test_validation_calibration_bridge.py
@@ -77,6 +78,7 @@ jobs:
           bash -n ../scripts/deploy/enable-esphome-native-bridge.sh
           bash -n ../scripts/deploy/enable-installed-telemetry-profile.sh
           bash -n ../scripts/deploy/confirm-installed-sensor-identification.sh
+          bash -n ../scripts/deploy/validate-weather-anticipation.sh
 
   frontend-build:
     runs-on: ubuntu-latest
