@@ -79,6 +79,7 @@ jobs:
           bash -n ../scripts/deploy/enable-installed-telemetry-profile.sh
           bash -n ../scripts/deploy/confirm-installed-sensor-identification.sh
           bash -n ../scripts/deploy/validate-weather-anticipation.sh
+          bash -n ../scripts/deploy/configure-weather-location.sh
           bash -n ../scripts/commissioning/field-certification-preflight.sh
 
   frontend-build:
