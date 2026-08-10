@@ -5,6 +5,7 @@ This wrapper narrows the certified hydraulic and thermal behaviour without
 reopening the large legacy module during finalization:
 
 - START is accepted only from OFF (FAULT requires an explicit reset),
+- real hardware START is blocked until commissioning is release-ready,
 - thermal safety is re-evaluated immediately before M11+M13 are energized,
 - real hardware fails closed on missing, stale or invalid thermal data,
 - every sequence failure enters FAULT deterministically after a best-effort
@@ -16,11 +17,13 @@ from __future__ import annotations
 import logging
 import os
 
+from app.geocooling.commissioning_readiness import build_commissioning_readiness
 from app.geocooling.controller_base import (
     GeoCoolingController as _BaseGeoCoolingController,
     utc_now,
 )
 from app.geocooling.models import GeoCoolingState
+from app.geocooling.telemetry_health_service import TelemetryHealthService
 
 logger = logging.getLogger("sbc.geocooling")
 
@@ -187,8 +190,47 @@ class GeoCoolingController(_BaseGeoCoolingController):
 
         return decision
 
+    def _commissioning_readiness(self) -> dict[str, object]:
+        """Return the read-only commissioning gate for real hardware START.
+
+        Any error while reading telemetry is treated as not-ready. This method
+        does not write configuration, publish MQTT or touch the hardware.
+        """
+
+        if self.driver_name == "simulation":
+            return {
+                "stage": "SIMULATION",
+                "ready_for_release": True,
+                "read_only": True,
+                "hardware_touched": False,
+            }
+
+        try:
+            telemetry_health = TelemetryHealthService().health()
+            report = build_commissioning_readiness(telemetry_health)
+            return {
+                **report,
+                "read_only": True,
+                "hardware_touched": False,
+            }
+        except Exception as exc:
+            logger.error(
+                "Commissioning readiness indisponible; START réel refusé: %s",
+                exc,
+                exc_info=True,
+            )
+            return {
+                "component": "geocooling_commissioning_readiness",
+                "stage": "UPSTREAM_NOT_READY",
+                "ready_for_release": False,
+                "next_action": "Restore commissioning readiness diagnostics before real hardware START.",
+                "reason": f"Commissioning readiness unavailable: {exc}",
+                "read_only": True,
+                "hardware_touched": False,
+            }
+
     def request_start(self) -> dict[str, object]:
-        """Reject any START unless the controller is explicitly OFF."""
+        """Reject START unless controller state and commissioning gates allow it."""
 
         with self._lock:
             if self.state == GeoCoolingState.FAULT:
@@ -218,6 +260,20 @@ class GeoCoolingController(_BaseGeoCoolingController):
                         "Démarrage refusé : le contrôleur doit être OFF "
                         f"(état actuel : {self.state.value})."
                     ),
+                    "status": self.status(),
+                }
+
+            readiness = self._commissioning_readiness()
+            if not bool(readiness.get("ready_for_release", False)):
+                stage = str(readiness.get("stage", "UNKNOWN"))
+                next_action = str(readiness.get("next_action", "Complete commissioning."))
+                return {
+                    "accepted": False,
+                    "message": (
+                        "Démarrage réel refusé par le Commissioning Gate "
+                        f"({stage}) : {next_action}"
+                    ),
+                    "commissioning_readiness": readiness,
                     "status": self.status(),
                 }
 
