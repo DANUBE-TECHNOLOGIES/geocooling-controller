@@ -62,6 +62,35 @@ services:
     networks:
       - sbc
 
+  frontend:
+    build:
+      context: ./frontend/geocooling-ui
+      args:
+        NEXT_PUBLIC_GEOCOOLING_API_URL: /api
+    container_name: sbc-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      GEOCOOLING_API_URL: http://backend:8000
+      BACKEND_API_URL: http://backend:8000
+      TZ: ${TZ}
+    ports:
+      - "${GEOCOOLING_UI_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/geocooling/readiness').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      - sbc
+
   esphome-bridge:
     env_file:
       - .env
