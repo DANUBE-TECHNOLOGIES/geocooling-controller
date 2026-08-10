@@ -76,6 +76,7 @@ jobs:
           bash -n ../scripts/audit/geocooling-physical-sensor-identification.sh
           bash -n ../scripts/deploy/enable-esphome-native-bridge.sh
           bash -n ../scripts/deploy/enable-installed-telemetry-profile.sh
+          bash -n ../scripts/deploy/confirm-installed-sensor-identification.sh
 
   frontend-build:
     runs-on: ubuntu-latest
