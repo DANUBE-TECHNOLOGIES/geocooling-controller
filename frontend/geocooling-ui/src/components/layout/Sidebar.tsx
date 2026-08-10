@@ -83,6 +83,12 @@ const navigation: NavigationGroup[] = [
         icon: "≋",
       },
       {
+        href: "/commissioning",
+        label: "Commissioning",
+        description: "Gates de mise en service",
+        icon: "✓",
+      },
+      {
         href: "/runtime",
         label: "Runtime",
         description: "Services & API",
