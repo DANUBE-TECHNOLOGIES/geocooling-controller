@@ -50,12 +50,32 @@ type ActivationPolicy = {
   rules?: Record<string, string>;
 };
 
+type ReleaseReadiness = {
+  state?: "COMMISSIONING_BLOCKED" | "CONFIG_REVIEW_REQUIRED" | "READY_FOR_DEPLOYMENT";
+  software_release_candidate?: boolean;
+  commissioning_state?: string;
+  commissioning_ready?: boolean;
+  deployment_ready?: boolean;
+  runtime_safe_defaults?: boolean;
+  active_dangerous_flags?: string[];
+  blockers?: string[];
+  runtime_flags?: Record<string, boolean>;
+  read_only?: boolean;
+  hardware_touched?: boolean;
+};
+
 const LABELS: Record<ReadinessState, string> = {
   UPSTREAM_NOT_READY: "AMONT À RÉTABLIR",
   IDENTIFICATION_REQUIRED: "IDENTIFICATION REQUISE",
   MAPPING_INCOMPLETE: "MAPPING INCOMPLET",
   FIELD_CERTIFICATION_REQUIRED: "CERTIFICATION TERRAIN REQUISE",
   READY_FOR_RELEASE: "PRÊT POUR RELEASE",
+};
+
+const RELEASE_LABELS: Record<string, string> = {
+  COMMISSIONING_BLOCKED: "RELEASE BLOQUÉE",
+  CONFIG_REVIEW_REQUIRED: "CONFIG À SÉCURISER",
+  READY_FOR_DEPLOYMENT: "PRÊT À DÉPLOYER",
 };
 
 const STEPS: Array<{ state: ReadinessState; label: string; description: string }> = [
@@ -107,6 +127,7 @@ export default function CommissioningPage() {
 
   const [readiness, setReadiness] = useState<CommissioningReadiness | null>(null);
   const [policy, setPolicy] = useState<ActivationPolicy | null>(null);
+  const [release, setRelease] = useState<ReleaseReadiness | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,13 +135,17 @@ export default function CommissioningPage() {
     setLoading(true);
     setError(null);
     try {
-      const [readinessResponse, policyResponse] = await Promise.all([
+      const [readinessResponse, policyResponse, releaseResponse] = await Promise.all([
         fetch(
           "/api/geocooling/brain-v2/integration/home-assistant/commissioning-readiness",
           { cache: "no-store" },
         ),
         fetch(
           "/api/geocooling/brain-v2/integration/home-assistant/hardware-activation-policy",
+          { cache: "no-store" },
+        ),
+        fetch(
+          "/api/geocooling/brain-v2/integration/home-assistant/release-readiness",
           { cache: "no-store" },
         ),
       ]);
@@ -130,8 +155,12 @@ export default function CommissioningPage() {
       if (!policyResponse.ok) {
         throw new Error(`Activation policy HTTP ${policyResponse.status}`);
       }
+      if (!releaseResponse.ok) {
+        throw new Error(`Release readiness HTTP ${releaseResponse.status}`);
+      }
       setReadiness((await readinessResponse.json()) as CommissioningReadiness);
       setPolicy((await policyResponse.json()) as ActivationPolicy);
+      setRelease((await releaseResponse.json()) as ReleaseReadiness);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Erreur commissioning");
     } finally {
@@ -220,6 +249,40 @@ export default function CommissioningPage() {
             <h2>{readiness?.field_certification_confirmed ? "Certifié" : "À certifier"}</h2>
             <p>EV et M11/M13 restent un gate physique distinct.</p>
           </article>
+        </section>
+
+        <section className="gc-panel">
+          <div className="gc-panel__header">
+            <div>
+              <span className="gc-eyebrow">RELEASE READINESS</span>
+              <h2>{RELEASE_LABELS[release?.state ?? ""] ?? "État indisponible"}</h2>
+            </div>
+            <StatusBadge
+              label={release?.deployment_ready ? "DEPLOYABLE" : "BLOQUÉ"}
+              tone={release?.deployment_ready ? "success" : "warning"}
+            />
+          </div>
+          <dl className="gc-definition-list">
+            <div><dt>RC logiciel</dt><dd>{release?.software_release_candidate ? "Prêt" : "Inconnu"}</dd></div>
+            <div><dt>Commissioning</dt><dd>{release?.commissioning_ready ? "Terminé" : "Incomplet"}</dd></div>
+            <div><dt>Safe defaults</dt><dd>{release?.runtime_safe_defaults ? "OK" : "À rétablir"}</dd></div>
+            <div><dt>Déploiement</dt><dd>{release?.deployment_ready ? "Autorisé" : "Bloqué"}</dd></div>
+          </dl>
+          {release?.active_dangerous_flags?.length ? (
+            <p>
+              Flags actifs à neutraliser : <code>{release.active_dangerous_flags.join(", ")}</code>
+            </p>
+          ) : null}
+          {release?.blockers?.length ? (
+            <div>
+              <strong>Blocages :</strong>
+              <ul>
+                {release.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+              </ul>
+            </div>
+          ) : (
+            <p>Aucun blocage de release détecté.</p>
+          )}
         </section>
 
         <section className="gc-panel">
@@ -322,7 +385,7 @@ export default function CommissioningPage() {
             <StatusBadge label="AUCUN ACTIONNEMENT" tone="success" />
           </div>
           <dl className="gc-definition-list">
-            <div><dt>Hardware touché</dt><dd>{readiness?.hardware_touched === false && policy?.hardware_touched === false ? "Non" : "Inconnu"}</dd></div>
+            <div><dt>Hardware touché</dt><dd>{readiness?.hardware_touched === false && policy?.hardware_touched === false && release?.hardware_touched === false ? "Non" : "Inconnu"}</dd></div>
             <div><dt>Activation automatique</dt><dd>{readiness?.automatic_hardware_enable === false ? "Interdite" : "Inconnue"}</dd></div>
             <div><dt>Écriture DB</dt><dd>{readiness?.database_write === false ? "Aucune" : "Inconnue"}</dd></div>
             <div><dt>Publication MQTT</dt><dd>{readiness?.mqtt_publish === false ? "Aucune" : "Inconnue"}</dd></div>
