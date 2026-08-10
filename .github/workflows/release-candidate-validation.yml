@@ -58,6 +58,7 @@ jobs:
             tests/test_geocooling_waveshare_modbus_driver.py \
             tests/test_geocooling_telemetry_health.py \
             tests/test_telemetry_health_service.py \
+            tests/test_commissioning_readiness.py \
             tests/test_safe_home_assistant_bridge.py
 
       - name: Passive audit script syntax
