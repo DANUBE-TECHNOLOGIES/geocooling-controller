@@ -3,3 +3,4 @@ uvicorn[standard]==0.34.3
 SQLAlchemy==2.0.41
 psycopg[binary]==3.2.9
 paho-mqtt==2.1.0
+aioesphomeapi>=45.0.4,<47
