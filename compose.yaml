@@ -34,7 +34,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      APP_VERSION: 0.6.7
+      APP_VERSION: ${APP_VERSION:-0.6.11}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MQTT_HOST: ${MQTT_HOST}
       MQTT_PORT: ${MQTT_PORT}
