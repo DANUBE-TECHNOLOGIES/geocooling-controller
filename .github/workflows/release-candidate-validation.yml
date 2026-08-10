@@ -81,6 +81,7 @@ jobs:
           bash -n ../scripts/deploy/confirm-installed-sensor-identification.sh
           bash -n ../scripts/deploy/validate-weather-anticipation.sh
           bash -n ../scripts/deploy/configure-weather-location.sh
+          bash -n ../scripts/deploy/validate-precooling-advisory.sh
           bash -n ../scripts/commissioning/field-certification-preflight.sh
 
   frontend-build:
