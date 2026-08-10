@@ -35,6 +35,21 @@ type CommissioningReadiness = {
   };
 };
 
+type ActivationPolicy = {
+  readiness_state?: string;
+  controller_start_allowed?: boolean;
+  manual_arm_allowed?: boolean;
+  manual_positive_commands_allowed?: boolean;
+  commissioning_tests_allowed?: boolean;
+  safe_stop_allowed?: boolean;
+  pump_stop_allowed?: boolean;
+  valve_close_allowed?: boolean;
+  disarm_allowed?: boolean;
+  read_only?: boolean;
+  hardware_touched?: boolean;
+  rules?: Record<string, string>;
+};
+
 const LABELS: Record<ReadinessState, string> = {
   UPSTREAM_NOT_READY: "AMONT À RÉTABLIR",
   IDENTIFICATION_REQUIRED: "IDENTIFICATION REQUISE",
@@ -76,6 +91,10 @@ function stateIndex(state?: ReadinessState): number {
   return STEPS.findIndex((step) => step.state === state);
 }
 
+function permissionLabel(value?: boolean): string {
+  return value === true ? "AUTORISÉ" : "BLOQUÉ";
+}
+
 export default function CommissioningPage() {
   const {
     connected,
@@ -87,6 +106,7 @@ export default function CommissioningPage() {
   } = useGeoCooling();
 
   const [readiness, setReadiness] = useState<CommissioningReadiness | null>(null);
+  const [policy, setPolicy] = useState<ActivationPolicy | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,12 +114,24 @@ export default function CommissioningPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(
-        "/api/geocooling/brain-v2/integration/home-assistant/commissioning-readiness",
-        { cache: "no-store" },
-      );
-      if (!response.ok) throw new Error(`Commissioning HTTP ${response.status}`);
-      setReadiness((await response.json()) as CommissioningReadiness);
+      const [readinessResponse, policyResponse] = await Promise.all([
+        fetch(
+          "/api/geocooling/brain-v2/integration/home-assistant/commissioning-readiness",
+          { cache: "no-store" },
+        ),
+        fetch(
+          "/api/geocooling/brain-v2/integration/home-assistant/hardware-activation-policy",
+          { cache: "no-store" },
+        ),
+      ]);
+      if (!readinessResponse.ok) {
+        throw new Error(`Commissioning HTTP ${readinessResponse.status}`);
+      }
+      if (!policyResponse.ok) {
+        throw new Error(`Activation policy HTTP ${policyResponse.status}`);
+      }
+      setReadiness((await readinessResponse.json()) as CommissioningReadiness);
+      setPolicy((await policyResponse.json()) as ActivationPolicy);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Erreur commissioning");
     } finally {
@@ -118,6 +150,29 @@ export default function CommissioningPage() {
     refresh();
     void load();
   }, [load, refresh]);
+
+  const commandPaths = [
+    {
+      label: "START normal",
+      allowed: policy?.controller_start_allowed,
+      rule: policy?.rules?.controller_start,
+    },
+    {
+      label: "Armement manuel",
+      allowed: policy?.manual_arm_allowed,
+      rule: policy?.rules?.manual_arm,
+    },
+    {
+      label: "Commandes manuelles ON",
+      allowed: policy?.manual_positive_commands_allowed,
+      rule: policy?.rules?.manual_positive_commands,
+    },
+    {
+      label: "Tests physiques commissioning",
+      allowed: policy?.commissioning_tests_allowed,
+      rule: policy?.rules?.commissioning_tests,
+    },
+  ];
 
   return (
     <AppShell
@@ -180,6 +235,49 @@ export default function CommissioningPage() {
         <section className="gc-panel">
           <div className="gc-panel__header">
             <div>
+              <span className="gc-eyebrow">POLITIQUE D’ACTIVATION</span>
+              <h2>Chemins de commande</h2>
+            </div>
+            <StatusBadge label="READ-ONLY" tone="success" />
+          </div>
+          <p>
+            Cette matrice est calculée côté backend. Elle n’exécute aucune commande et
+            permet de vérifier qu’un chemin alternatif ne contourne pas les gates.
+          </p>
+          <div className="gc-table-wrap">
+            <table className="gc-table">
+              <thead>
+                <tr>
+                  <th>Chemin</th>
+                  <th>État</th>
+                  <th>Règle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {commandPaths.map((path) => (
+                  <tr key={path.label}>
+                    <td>{path.label}</td>
+                    <td>
+                      <StatusBadge
+                        label={permissionLabel(path.allowed)}
+                        tone={path.allowed === true ? "success" : "warning"}
+                      />
+                    </td>
+                    <td>{path.rule ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p>
+            Les actions de repli restent toujours autorisées : arrêt pompe, fermeture EV,
+            safe-stop et désarmement.
+          </p>
+        </section>
+
+        <section className="gc-panel">
+          <div className="gc-panel__header">
+            <div>
               <span className="gc-eyebrow">GATES DE MISE EN SERVICE</span>
               <h2>Progression</h2>
             </div>
@@ -224,7 +322,7 @@ export default function CommissioningPage() {
             <StatusBadge label="AUCUN ACTIONNEMENT" tone="success" />
           </div>
           <dl className="gc-definition-list">
-            <div><dt>Hardware touché</dt><dd>{readiness?.hardware_touched === false ? "Non" : "Inconnu"}</dd></div>
+            <div><dt>Hardware touché</dt><dd>{readiness?.hardware_touched === false && policy?.hardware_touched === false ? "Non" : "Inconnu"}</dd></div>
             <div><dt>Activation automatique</dt><dd>{readiness?.automatic_hardware_enable === false ? "Interdite" : "Inconnue"}</dd></div>
             <div><dt>Écriture DB</dt><dd>{readiness?.database_write === false ? "Aucune" : "Inconnue"}</dd></div>
             <div><dt>Publication MQTT</dt><dd>{readiness?.mqtt_publish === false ? "Aucune" : "Inconnue"}</dd></div>
