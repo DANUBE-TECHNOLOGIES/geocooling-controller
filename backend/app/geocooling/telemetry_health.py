@@ -46,6 +46,20 @@ NON_HYDRAULIC_SENSORS = {
 }
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _surface_reference_mode(value: str | None = None) -> str:
+    mode = (value or os.getenv("GEOCOOLING_SURFACE_REFERENCE_MODE", "sensor")).strip().lower()
+    if mode not in {"sensor", "floor_supply_proxy"}:
+        return "sensor"
+    return mode
+
+
 def _parse_timestamp(value: Any) -> datetime | None:
     if not value:
         return None
@@ -220,8 +234,16 @@ def build_telemetry_health(
     mappings: Mapping[str, str | None] | None = None,
     stale_seconds: int | None = None,
     now: datetime | None = None,
+    surface_reference_mode: str | None = None,
+    flow_required: bool | None = None,
 ) -> dict[str, Any]:
-    """Build a fail-closed health report for all six GeoCooling roles."""
+    """Build a fail-closed health report for the installed GeoCooling profile.
+
+    The four hydraulic temperatures are always required. Flow is optional by
+    default because it is used for power/energy metering, not hydraulic safety.
+    Surface protection can use either a real surface sensor (default) or an
+    explicitly enabled conservative floor-supply proxy.
+    """
 
     threshold = int(
         stale_seconds
@@ -229,6 +251,12 @@ def build_telemetry_health(
         else os.getenv("GEOCOOLING_SENSOR_STALE_SECONDS", "120")
     )
     supplied = mappings or {}
+    reference_mode = _surface_reference_mode(surface_reference_mode)
+    require_flow = (
+        _bool_env("GEOCOOLING_FLOW_REQUIRED", False)
+        if flow_required is None
+        else bool(flow_required)
+    )
 
     role_results: dict[str, dict[str, Any]] = {}
     for role, spec in ROLE_SPECS.items():
@@ -247,6 +275,53 @@ def build_telemetry_health(
             env_var=spec["env"],
         )
 
+    # A floor-supply proxy is deliberately conservative for condensation
+    # protection because the supply water is the coldest monitored point on the
+    # floor loop. The proxy remains fail-closed if that measurement is absent or stale.
+    if reference_mode == "floor_supply_proxy":
+        supply = role_results["floor_supply"]
+        role_results["surface"] = {
+            **supply,
+            "role": "surface",
+            "env_var": "GEOCOOLING_SURFACE_REFERENCE_MODE",
+            "sensor_name": supply.get("sensor_name"),
+            "state": "PROXY_OK" if supply.get("ready") else "PROXY_UNAVAILABLE",
+            "ready": bool(supply.get("ready")),
+            "proxy": True,
+            "proxy_source_role": "floor_supply",
+            "reason": (
+                "Conservative floor-supply temperature proxy is fresh."
+                if supply.get("ready")
+                else "Conservative floor-supply proxy is unavailable or stale."
+            ),
+        }
+    else:
+        role_results["surface"]["proxy"] = False
+
+    for role, result in role_results.items():
+        result["required_for_operation"] = role != "flow" or require_flow
+        if role == "surface":
+            result["required_for_operation"] = True
+
+    required_roles = [
+        role for role, result in role_results.items()
+        if result["required_for_operation"]
+    ]
+    optional_roles = [
+        role for role, result in role_results.items()
+        if not result["required_for_operation"]
+    ]
+
+    required_ready = all(role_results[role]["ready"] for role in required_roles)
+    configured_required_count = sum(
+        1
+        for role in required_roles
+        if role_results[role]["state"] not in {"UNSET", "PROXY_UNAVAILABLE"}
+    )
+    configured_count = sum(
+        1 for result in role_results.values() if result["state"] != "UNSET"
+    )
+
     observed_sensors = sorted(
         {
             str(row.get("sensor_name") or "").strip()
@@ -255,23 +330,24 @@ def build_telemetry_health(
         }
     )
     candidates = _candidate_sensors(rows)
-
-    all_ready = all(result["ready"] for result in role_results.values())
-    configured_count = sum(
-        1 for result in role_results.values() if result["state"] != "UNSET"
-    )
-
     upstream_state = "OBSERVED" if candidates else "UPSTREAM_EMPTY"
 
     return {
         "component": "geocooling_telemetry_health",
-        "ready": all_ready,
-        "fail_closed": not all_ready,
+        "ready": required_ready,
+        "fail_closed": not required_ready,
         "stale_seconds": threshold,
         "upstream_state": upstream_state,
         "observed_sensor_count": len(observed_sensors),
         "hydraulic_candidate_count": len(candidates),
         "configured_role_count": configured_count,
+        "required_role_count": len(required_roles),
+        "configured_required_role_count": configured_required_count,
+        "optional_role_count": len(optional_roles),
+        "required_roles": required_roles,
+        "optional_roles": optional_roles,
+        "surface_reference_mode": reference_mode,
+        "flow_required": require_flow,
         "auto_assignment_allowed": False,
         "physical_confirmation_required": True,
         "candidate_sensors": candidates,
