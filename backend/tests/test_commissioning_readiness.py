@@ -51,6 +51,26 @@ def test_healthy_telemetry_requires_field_certification():
     assert result["telemetry_ready"] is True
 
 
+def test_optional_flow_does_not_block_installed_profile():
+    telemetry = {
+        "upstream_state": "OBSERVED",
+        "ready": True,
+        "roles": {f"role_{i}": {} for i in range(6)},
+        "required_role_count": 5,
+        "configured_required_role_count": 5,
+        "optional_roles": ["flow"],
+    }
+    result = build_commissioning_readiness(
+        telemetry,
+        physical_identification_confirmed=True,
+    )
+
+    assert result["state"] == "FIELD_CERTIFICATION_REQUIRED"
+    assert result["required_role_count"] == 5
+    assert result["configured_required_role_count"] == 5
+    assert result["optional_roles"] == ["flow"]
+
+
 def test_release_ready_requires_both_human_confirmations():
     result = build_commissioning_readiness(
         health(configured=6, ready=True),
