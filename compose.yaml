@@ -62,6 +62,31 @@ services:
     networks:
       - sbc
 
+  esphome-bridge:
+    env_file:
+      - .env
+    build:
+      context: ./backend
+    container_name: sbc-esphome-bridge
+    command:
+      - python
+      - -m
+      - app.geocooling.esphome_native_bridge
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      ESPHOME_BRIDGE_HOST: ${ESPHOME_BRIDGE_HOST:-192.168.10.105}
+      ESPHOME_BRIDGE_PORT: ${ESPHOME_BRIDGE_PORT:-6053}
+      ESPHOME_BRIDGE_NOISE_PSK: ${ESPHOME_BRIDGE_NOISE_PSK}
+      ESPHOME_BRIDGE_RECONNECT_SECONDS: ${ESPHOME_BRIDGE_RECONNECT_SECONDS:-5}
+      LOG_LEVEL: ${LOG_LEVEL}
+      TZ: ${TZ}
+    networks:
+      - sbc
+
   adminer:
     image: adminer:4
     container_name: sbc-adminer
