@@ -70,13 +70,16 @@ def test_real_driver_blocks_when_no_thermal_snapshot_exists(monkeypatch):
     assert result["required"] is True
 
 
-def test_real_driver_blocks_incomplete_thermal_snapshot(monkeypatch):
+def test_real_driver_blocks_incomplete_thermal_snapshot_by_default(monkeypatch):
     monkeypatch.setenv("GEOCOOLING_THERMAL_MAX_AGE_SECONDS", "180")
+    monkeypatch.delenv("GEOCOOLING_SURFACE_REFERENCE_MODE", raising=False)
     snapshot = ThermalSnapshot(
         timestamp=utc_now(),
         indoor_temperature_c=26.0,
         indoor_humidity_percent=55.0,
         surface_temperature_c=None,
+        floor_supply_temperature_c=18.0,
+        floor_return_temperature_c=20.0,
     )
     controller = controller_with_snapshot(snapshot)
 
@@ -84,7 +87,49 @@ def test_real_driver_blocks_incomplete_thermal_snapshot(monkeypatch):
 
     assert result["safe"] is False
     assert result["level"] == "blocked"
-    assert "température de surface" in result["reason"]
+    assert "référence de surface" in result["reason"]
+
+
+def test_real_driver_accepts_explicit_floor_loop_surface_estimate(monkeypatch):
+    monkeypatch.setenv("GEOCOOLING_THERMAL_MAX_AGE_SECONDS", "180")
+    monkeypatch.setenv("GEOCOOLING_SURFACE_REFERENCE_MODE", "floor_loop_estimate")
+    monkeypatch.setenv("GEOCOOLING_SURFACE_ESTIMATION_BIAS_C", "-0.5")
+    snapshot = ThermalSnapshot(
+        timestamp=utc_now(),
+        indoor_temperature_c=26.0,
+        indoor_humidity_percent=50.0,
+        surface_temperature_c=None,
+        floor_supply_temperature_c=18.0,
+        floor_return_temperature_c=20.0,
+    )
+    controller = controller_with_snapshot(snapshot)
+
+    result = controller._thermal_safety()
+
+    assert result["safe"] is True
+    assert result["surface_estimated"] is True
+    assert result["surface_reference_mode"] == "floor_loop_estimate"
+    assert result["surface_temperature_c"] == 18.5
+    assert result["surface_estimation"]["mean_water_temperature_c"] == 19.0
+
+
+def test_real_driver_estimated_surface_fails_closed_if_return_missing(monkeypatch):
+    monkeypatch.setenv("GEOCOOLING_SURFACE_REFERENCE_MODE", "floor_loop_estimate")
+    snapshot = ThermalSnapshot(
+        timestamp=utc_now(),
+        indoor_temperature_c=26.0,
+        indoor_humidity_percent=50.0,
+        surface_temperature_c=None,
+        floor_supply_temperature_c=18.0,
+        floor_return_temperature_c=None,
+    )
+    controller = controller_with_snapshot(snapshot)
+
+    result = controller._thermal_safety()
+
+    assert result["safe"] is False
+    assert result["level"] == "blocked"
+    assert result["surface_estimated"] is False
 
 
 def test_real_driver_blocks_stale_thermal_snapshot(monkeypatch):
