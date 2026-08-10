@@ -86,6 +86,7 @@ jobs:
           bash -n ../scripts/rc3/start-precooling-journal.sh
           bash -n ../scripts/rc3/status-precooling-journal.sh
           bash -n ../scripts/rc3/stop-precooling-journal.sh
+          bash -n ../scripts/rc3/analyze-precooling-journal.sh
           python -m py_compile ../tools/rc3/precooling_advisory_collector.py
           python -m py_compile ../tools/rc3/analyze_precooling_journal.py
 
