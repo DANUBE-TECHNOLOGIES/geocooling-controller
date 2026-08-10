@@ -141,7 +141,67 @@ def test_candidates_are_exposed_without_role_assignment():
     assert all(role["state"] == "UNSET" for role in result["roles"].values())
 
 
-def test_all_six_roles_can_be_ready():
+def test_installed_four_sensor_profile_is_ready_with_derived_surface_and_optional_flow():
+    mappings = {
+        "surface": None,
+        "floor_supply": "gc_floor_supply",
+        "floor_return": "gc_floor_return",
+        "source_inlet": "gc_source_inlet",
+        "source_outlet": "gc_source_outlet",
+        "flow": None,
+    }
+    rows = [
+        row("gc_floor_supply", value=18.0),
+        row("gc_floor_return", value=20.0),
+        row("gc_source_inlet", value=12.0),
+        row("gc_source_outlet", value=14.0),
+    ]
+
+    result = build_telemetry_health(
+        rows,
+        mappings=mappings,
+        now=NOW,
+        surface_reference_mode="floor_loop_estimate",
+        flow_required=False,
+    )
+
+    assert result["ready"] is True
+    assert result["required_role_count"] == 5
+    assert result["optional_roles"] == ["flow"]
+    assert result["roles"]["surface"]["state"] == "DERIVED_OK"
+    assert result["roles"]["surface"]["value"] == 18.5
+    assert result["roles"]["flow"]["required_for_operation"] is False
+
+
+def test_surface_estimate_fails_closed_when_one_floor_probe_is_stale():
+    mappings = {
+        "surface": None,
+        "floor_supply": "gc_floor_supply",
+        "floor_return": "gc_floor_return",
+        "source_inlet": "gc_source_inlet",
+        "source_outlet": "gc_source_outlet",
+        "flow": None,
+    }
+    rows = [
+        row("gc_floor_supply", value=18.0),
+        row("gc_floor_return", age=121, value=20.0),
+        row("gc_source_inlet", value=12.0),
+        row("gc_source_outlet", value=14.0),
+    ]
+
+    result = build_telemetry_health(
+        rows,
+        mappings=mappings,
+        stale_seconds=120,
+        now=NOW,
+        surface_reference_mode="floor_loop_estimate",
+    )
+
+    assert result["ready"] is False
+    assert result["roles"]["surface"]["state"] == "DERIVED_UNAVAILABLE"
+
+
+def test_all_six_roles_can_be_ready_with_real_surface_and_flow():
     mappings = {
         "surface": "gc_surface",
         "floor_supply": "gc_floor_supply",
@@ -158,7 +218,13 @@ def test_all_six_roles_can_be_ready():
         row("gc_source_out"),
         row("gc_flow", metric="flow", value=28.0),
     ]
-    result = build_telemetry_health(rows, mappings=mappings, now=NOW)
+    result = build_telemetry_health(
+        rows,
+        mappings=mappings,
+        now=NOW,
+        surface_reference_mode="sensor",
+        flow_required=True,
+    )
     assert result["upstream_state"] == "OBSERVED"
     assert result["ready"] is True
     assert all(item["state"] == "OK" for item in result["roles"].values())
