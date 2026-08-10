@@ -89,7 +89,7 @@ def test_real_hardware_start_is_rejected_before_any_actuation_when_commissioning
     controller = bare_controller(GeoCoolingState.OFF)
     controller.driver_name = "waveshare_modbus"
     controller._commissioning_readiness = lambda: {
-        "stage": "IDENTIFICATION_REQUIRED",
+        "state": "IDENTIFICATION_REQUIRED",
         "ready_for_release": False,
         "next_action": "Confirm physical sensor identity before assigning mappings.",
         "read_only": True,
@@ -100,7 +100,7 @@ def test_real_hardware_start_is_rejected_before_any_actuation_when_commissioning
 
     assert result["accepted"] is False
     assert "Commissioning Gate" in result["message"]
-    assert result["commissioning_readiness"]["stage"] == "IDENTIFICATION_REQUIRED"
+    assert result["commissioning_readiness"]["state"] == "IDENTIFICATION_REQUIRED"
     assert controller.driver.valve_open is False
     assert controller.driver.pump_running is False
     assert controller.driver.start_pump_calls == 0
@@ -112,7 +112,7 @@ def test_simulation_commissioning_readiness_is_non_blocking_and_read_only():
 
     readiness = controller._commissioning_readiness()
 
-    assert readiness["stage"] == "SIMULATION"
+    assert readiness["state"] == "SIMULATION"
     assert readiness["ready_for_release"] is True
     assert readiness["read_only"] is True
     assert readiness["hardware_touched"] is False
