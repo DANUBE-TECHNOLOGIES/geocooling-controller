@@ -73,6 +73,72 @@ DEFAULT_SOURCE_ROUTES: dict[str, tuple[str, ...]] = {
 }
 
 
+def _as_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return number
+
+
+def normalize_live_thermal_payload(
+    payload: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Normalize names emitted by the live thermal engine for RC1 builder.
+
+    The production thermal endpoint currently exposes a few canonical fields
+    whose names differ from the historical aliases accepted by RC1.7B. Keep
+    the builder backwards-compatible by normalizing only at the live adapter.
+    This function is read-only and never mutates the source mapping.
+    """
+    if payload is None:
+        return None
+
+    normalized = dict(payload)
+
+    aliases = {
+        "indoor_humidity_percent": "indoor_humidity_pct",
+        "source_inlet_temperature_c": "source_in_temperature_c",
+        "source_outlet_temperature_c": "source_out_temperature_c",
+        "flow_rate_l_min": "flow_l_min",
+    }
+
+    for source_key, target_key in aliases.items():
+        if normalized.get(target_key) is None and normalized.get(source_key) is not None:
+            normalized[target_key] = normalized[source_key]
+
+    surface_mode = os.getenv(
+        "GEOCOOLING_SURFACE_REFERENCE_MODE",
+        "sensor",
+    ).strip().lower()
+
+    if (
+        normalized.get("floor_surface_temperature_c") is None
+        and normalized.get("surface_temperature_c") is None
+        and surface_mode == "floor_loop_estimate"
+    ):
+        supply = _as_float(normalized.get("floor_supply_temperature_c"))
+        return_temp = _as_float(normalized.get("floor_return_temperature_c"))
+        if supply is not None and return_temp is not None:
+            bias = _as_float(
+                os.getenv("GEOCOOLING_SURFACE_ESTIMATION_BIAS_C", "-0.5")
+            )
+            if bias is None:
+                bias = -0.5
+            bias = min(0.0, bias)
+            normalized["floor_surface_temperature_c"] = (
+                (supply + return_temp) / 2.0 + bias
+            )
+            normalized["surface_temperature_c"] = normalized[
+                "floor_surface_temperature_c"
+            ]
+            normalized["surface_temperature_source"] = "floor_loop_estimate"
+
+    return normalized
+
+
 class LocalReadOnlyApiClient:
     def __init__(
         self,
@@ -181,8 +247,12 @@ class LiveDecisionContextService:
             for source in self.routes
         }
 
+        thermal_payload = normalize_live_thermal_payload(
+            results["thermal"].payload
+        )
+
         context = self.builder.build(
-            thermal=results["thermal"].payload,
+            thermal=thermal_payload,
             weather=results["weather"].payload,
             prediction=results["prediction"].payload,
             learning=results["learning"].payload,
