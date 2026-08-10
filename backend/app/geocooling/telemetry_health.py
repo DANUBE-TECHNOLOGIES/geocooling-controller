@@ -1,8 +1,8 @@
 """GeoCooling telemetry-role health classification.
 
 Pure read-only helpers used to distinguish configuration errors from upstream
-sensor/metric loss. This module never publishes MQTT messages and never
-commands any actuator.
+sensor/metric loss. This module never publishes messages and never commands any
+actuator.
 """
 
 from __future__ import annotations
@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
+
+from app.geocooling.surface_estimation import estimate_floor_surface_temperature
 
 
 ROLE_SPECS: dict[str, dict[str, str]] = {
@@ -55,7 +57,9 @@ def _bool_env(name: str, default: bool = False) -> bool:
 
 def _surface_reference_mode(value: str | None = None) -> str:
     mode = (value or os.getenv("GEOCOOLING_SURFACE_REFERENCE_MODE", "sensor")).strip().lower()
-    if mode not in {"sensor", "floor_supply_proxy"}:
+    if mode == "floor_supply_proxy":
+        return "floor_loop_estimate"
+    if mode not in {"sensor", "floor_loop_estimate"}:
         return "sensor"
     return mode
 
@@ -240,9 +244,9 @@ def build_telemetry_health(
     """Build a fail-closed health report for the installed GeoCooling profile.
 
     The four hydraulic temperatures are always required. Flow is optional by
-    default because it is used for power/energy metering, not hydraulic safety.
-    Surface protection can use either a real surface sensor (default) or an
-    explicitly enabled conservative floor-supply proxy.
+    default because it is used for power/energy metering, not condensation
+    safety. Surface protection can use either a real sensor or an explicitly
+    enabled conservative estimate derived from floor supply + return.
     """
 
     threshold = int(
@@ -275,28 +279,47 @@ def build_telemetry_health(
             env_var=spec["env"],
         )
 
-    # A floor-supply proxy is deliberately conservative for condensation
-    # protection because the supply water is the coldest monitored point on the
-    # floor loop. The proxy remains fail-closed if that measurement is absent or stale.
-    if reference_mode == "floor_supply_proxy":
+    if reference_mode == "floor_loop_estimate":
         supply = role_results["floor_supply"]
+        return_ = role_results["floor_return"]
+        both_ready = bool(supply.get("ready") and return_.get("ready"))
+        estimate = estimate_floor_surface_temperature(
+            supply.get("value") if both_ready else None,
+            return_.get("value") if both_ready else None,
+        )
+        ages = [
+            item.get("age_seconds")
+            for item in (supply, return_)
+            if item.get("age_seconds") is not None
+        ]
+        measured_times = [
+            item.get("measured_at")
+            for item in (supply, return_)
+            if item.get("measured_at")
+        ]
         role_results["surface"] = {
-            **supply,
             "role": "surface",
             "env_var": "GEOCOOLING_SURFACE_REFERENCE_MODE",
-            "sensor_name": supply.get("sensor_name"),
-            "state": "PROXY_OK" if supply.get("ready") else "PROXY_UNAVAILABLE",
-            "ready": bool(supply.get("ready")),
-            "proxy": True,
-            "proxy_source_role": "floor_supply",
+            "sensor_name": "derived:gc_floor_supply+gc_floor_return",
+            "metric": "temperature",
+            "stale_seconds": threshold,
+            "measured_at": min(measured_times) if measured_times else None,
+            "age_seconds": max(ages) if ages else None,
+            "value": estimate.temperature_c,
+            "unit": "°C",
+            "mqtt_topic": None,
+            "state": "DERIVED_OK" if both_ready and estimate.available else "DERIVED_UNAVAILABLE",
+            "ready": bool(both_ready and estimate.available),
+            "derived": True,
+            "derivation": estimate.as_dict(),
             "reason": (
-                "Conservative floor-supply temperature proxy is fresh."
-                if supply.get("ready")
-                else "Conservative floor-supply proxy is unavailable or stale."
+                "Conservative floor-surface reference derived from fresh floor supply and return temperatures."
+                if both_ready and estimate.available
+                else "Surface estimate unavailable because floor supply/return telemetry is incomplete or stale."
             ),
         }
     else:
-        role_results["surface"]["proxy"] = False
+        role_results["surface"]["derived"] = False
 
     for role, result in role_results.items():
         result["required_for_operation"] = role != "flow" or require_flow
@@ -316,7 +339,7 @@ def build_telemetry_health(
     configured_required_count = sum(
         1
         for role in required_roles
-        if role_results[role]["state"] not in {"UNSET", "PROXY_UNAVAILABLE"}
+        if role_results[role]["state"] not in {"UNSET", "DERIVED_UNAVAILABLE"}
     )
     configured_count = sum(
         1 for result in role_results.values() if result["state"] != "UNSET"
