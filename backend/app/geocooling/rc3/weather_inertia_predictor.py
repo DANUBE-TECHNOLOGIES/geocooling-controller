@@ -66,7 +66,6 @@ def _number(value: Any) -> float | None:
         result = float(value)
     except (TypeError, ValueError):
         return None
-
     return result if isfinite(result) else None
 
 
@@ -75,9 +74,7 @@ def _walk(node: Any) -> Iterable[tuple[str, Any]]:
         for key, value in node.items():
             yield str(key), value
             yield from _walk(value)
-    elif isinstance(node, Sequence) and not isinstance(
-        node, (str, bytes, bytearray)
-    ):
+    elif isinstance(node, Sequence) and not isinstance(node, (str, bytes, bytearray)):
         for item in node:
             yield from _walk(item)
 
@@ -85,69 +82,74 @@ def _walk(node: Any) -> Iterable[tuple[str, Any]]:
 def _first(payload: Mapping[str, Any] | None, names: Sequence[str]) -> Any:
     if not isinstance(payload, Mapping):
         return None
-
     wanted = {name.lower() for name in names}
-
     for key, value in _walk(payload):
         if key.lower() in wanted and value is not None:
             return value
-
     return None
 
 
-def _context_value(
-    context: Mapping[str, Any],
-    section: str,
-    name: str,
-) -> float | None:
+def _context_value(context: Mapping[str, Any], section: str, name: str) -> float | None:
     section_value = context.get(section)
-
     if not isinstance(section_value, Mapping):
         return None
-
     return _number(section_value.get(name))
 
 
-def _extract_hourly_arrays(
+def _extract_hourly_series(
     weather: Mapping[str, Any],
-) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
-    hourly = weather.get("hourly")
-
-    if not isinstance(hourly, Mapping):
+) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], str]:
+    """Accept both legacy column arrays and WeatherService normalized row lists."""
+    hourly: Any = weather.get("hourly")
+    if hourly is None:
         hourly = weather.get("hourly_forecast")
-
-    if not isinstance(hourly, Mapping):
+    if hourly is None:
         hourly = weather.get("forecast_hourly")
 
-    if not isinstance(hourly, Mapping):
-        return [], [], [], []
+    if isinstance(hourly, Sequence) and not isinstance(hourly, (str, bytes, bytearray)):
+        rows = [row for row in hourly if isinstance(row, Mapping)]
+        if rows:
+            return (
+                [row.get("time") or row.get("timestamp") or row.get("datetime") for row in rows],
+                [row.get("temperature_2m") if row.get("temperature_2m") is not None else row.get("temperature") for row in rows],
+                [row.get("cloud_cover") if row.get("cloud_cover") is not None else row.get("cloudcover") for row in rows],
+                [row.get("shortwave_radiation") if row.get("shortwave_radiation") is not None else row.get("solar_radiation") for row in rows],
+                [row.get("relative_humidity_2m") if row.get("relative_humidity_2m") is not None else row.get("humidity") for row in rows],
+                "normalized_rows",
+            )
 
-    times = list(
-        hourly.get("time")
-        or hourly.get("timestamps")
-        or hourly.get("datetime")
-        or []
-    )
-    temperatures = list(
-        hourly.get("temperature_2m")
-        or hourly.get("temperature")
-        or hourly.get("temperatures")
-        or []
-    )
-    clouds = list(
-        hourly.get("cloud_cover")
-        or hourly.get("cloudcover")
-        or hourly.get("clouds")
-        or []
-    )
-    solar = list(
-        hourly.get("shortwave_radiation")
-        or hourly.get("solar_radiation")
-        or hourly.get("global_tilted_irradiance")
-        or []
-    )
+    if isinstance(hourly, Mapping):
+        return (
+            list(hourly.get("time") or hourly.get("timestamps") or hourly.get("datetime") or []),
+            list(hourly.get("temperature_2m") or hourly.get("temperature") or hourly.get("temperatures") or []),
+            list(hourly.get("cloud_cover") or hourly.get("cloudcover") or hourly.get("clouds") or []),
+            list(hourly.get("shortwave_radiation") or hourly.get("solar_radiation") or hourly.get("global_tilted_irradiance") or []),
+            list(hourly.get("relative_humidity_2m") or hourly.get("humidity") or hourly.get("humidities") or []),
+            "column_arrays",
+        )
 
-    return times, temperatures, clouds, solar
+    return [], [], [], [], [], "none"
+
+
+def _forecast_quality(weather: Mapping[str, Any], point_count: int, source_shape: str) -> dict[str, Any]:
+    if source_shape != "none" and point_count >= 2:
+        mode = "HOURLY_FORECAST"
+        horizon_hours = max(0, point_count - 1)
+        degraded = False
+    else:
+        mode = "CURRENT_FALLBACK"
+        horizon_hours = 0
+        degraded = True
+    return {
+        "mode": mode,
+        "degraded": degraded,
+        "provider": weather.get("provider"),
+        "source_route": weather.get("_source_route"),
+        "source_shape": source_shape,
+        "forecast_points": point_count,
+        "forecast_horizon_hours": horizon_hours,
+        "advisory_only": True,
+    }
 
 
 def extract_weather_points(
@@ -156,35 +158,22 @@ def extract_weather_points(
     fallback_outdoor_c: float,
     max_hours: int = 48,
 ) -> tuple[WeatherPoint, ...]:
-    _, temperatures, clouds, solar = _extract_hourly_arrays(weather)
+    _, temperatures, clouds, solar, humidities, _ = _extract_hourly_series(weather)
     points: list[WeatherPoint] = []
 
     if temperatures:
         length = min(max_hours + 1, len(temperatures))
-
         for index in range(length):
             temperature = _number(temperatures[index])
-
             if temperature is None:
                 continue
-
-            cloud = (
-                _number(clouds[index])
-                if index < len(clouds)
-                else None
-            )
-            radiation = (
-                _number(solar[index])
-                if index < len(solar)
-                else None
-            )
-
             points.append(
                 WeatherPoint(
                     horizon_minutes=index * 60,
                     outdoor_temperature_c=temperature,
-                    cloud_cover_pct=cloud,
-                    solar_radiation_w_m2=radiation,
+                    cloud_cover_pct=_number(clouds[index]) if index < len(clouds) else None,
+                    solar_radiation_w_m2=_number(solar[index]) if index < len(solar) else None,
+                    relative_humidity_pct=_number(humidities[index]) if index < len(humidities) else None,
                 )
             )
 
@@ -192,22 +181,12 @@ def extract_weather_points(
         current = _number(
             _first(
                 weather,
-                (
-                    "temperature_2m",
-                    "outdoor_temperature",
-                    "outdoor_temperature_c",
-                    "temperature",
-                ),
+                ("temperature_2m", "outdoor_temperature", "outdoor_temperature_c", "temperature"),
             )
         )
-
         outside = current if current is not None else fallback_outdoor_c
-
         points = [
-            WeatherPoint(
-                horizon_minutes=hour * 60,
-                outdoor_temperature_c=outside,
-            )
+            WeatherPoint(horizon_minutes=hour * 60, outdoor_temperature_c=outside)
             for hour in range(max_hours + 1)
         ]
 
@@ -215,74 +194,31 @@ def extract_weather_points(
 
 
 class WeatherInertiaPredictor:
-    HORIZONS_MINUTES = (
-        30,
-        60,
-        120,
-        240,
-        360,
-        720,
-        1440,
-        2880,
-    )
+    HORIZONS_MINUTES = (30, 60, 120, 240, 360, 720, 1440, 2880)
 
-    def __init__(
-        self,
-        parameters: ThermalModelParameters | None = None,
-    ) -> None:
+    def __init__(self, parameters: ThermalModelParameters | None = None) -> None:
         self.parameters = parameters or ThermalModelParameters()
 
-    def predict(
-        self,
-        *,
-        context: Mapping[str, Any],
-        weather: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        indoor = _context_value(
-            context,
-            "measurements",
-            "indoor_temperature_c",
-        )
-        outdoor = _context_value(
-            context,
-            "measurements",
-            "outdoor_temperature_c",
-        )
-        floor_surface = _context_value(
-            context,
-            "measurements",
-            "floor_surface_temperature_c",
-        )
+    def predict(self, *, context: Mapping[str, Any], weather: Mapping[str, Any]) -> dict[str, Any]:
+        indoor = _context_value(context, "measurements", "indoor_temperature_c")
+        outdoor = _context_value(context, "measurements", "outdoor_temperature_c")
+        floor_surface = _context_value(context, "measurements", "floor_surface_temperature_c")
 
         if indoor is None:
             raise ValueError("indoor_temperature_c is required")
 
         if outdoor is None:
             outdoor = _number(
-                _first(
-                    weather,
-                    (
-                        "temperature_2m",
-                        "outdoor_temperature",
-                        "outdoor_temperature_c",
-                        "temperature",
-                    ),
-                )
+                _first(weather, ("temperature_2m", "outdoor_temperature", "outdoor_temperature_c", "temperature"))
             )
-
         if outdoor is None:
             outdoor = indoor
 
-        mass_temperature = (
-            floor_surface
-            if floor_surface is not None
-            else indoor
-        )
-
-        weather_points = extract_weather_points(
-            weather,
-            fallback_outdoor_c=outdoor,
-        )
+        mass_temperature = floor_surface if floor_surface is not None else indoor
+        weather_points = extract_weather_points(weather, fallback_outdoor_c=outdoor)
+        _, raw_temperatures, _, _, _, source_shape = _extract_hourly_series(weather)
+        usable_forecast_points = sum(_number(value) is not None for value in raw_temperatures[:49])
+        weather_quality = _forecast_quality(weather, usable_forecast_points, source_shape)
 
         trajectories = tuple(
             self._simulate(
@@ -291,11 +227,7 @@ class WeatherInertiaPredictor:
                 mass_c=mass_temperature,
                 weather_points=weather_points,
             )
-            for scenario in (
-                "BASELINE",
-                "SOFT_COOLING",
-                "FULL_COOLING",
-            )
+            for scenario in ("BASELINE", "SOFT_COOLING", "FULL_COOLING")
         )
 
         return {
@@ -304,16 +236,14 @@ class WeatherInertiaPredictor:
             "mode": "SHADOW",
             "horizons_minutes": list(self.HORIZONS_MINUTES),
             "model": asdict(self.parameters),
+            "weather_input": weather_quality,
             "input": {
                 "indoor_temperature_c": indoor,
                 "outdoor_temperature_c": outdoor,
                 "mass_temperature_c": mass_temperature,
                 "weather_points": len(weather_points),
             },
-            "trajectories": [
-                trajectory.as_dict()
-                for trajectory in trajectories
-            ],
+            "trajectories": [trajectory.as_dict() for trajectory in trajectories],
             "safety": {
                 "controller_authorized": False,
                 "controller_called": False,
@@ -335,99 +265,43 @@ class WeatherInertiaPredictor:
         air = indoor_c
         mass = mass_c
         points: list[TrajectoryPoint] = []
+        weather_by_hour = {point.horizon_minutes // 60: point for point in weather_points}
 
-        weather_by_hour = {
-            point.horizon_minutes // 60: point
-            for point in weather_points
-        }
-
-        # 30-minute integration step to preserve short-horizon behaviour.
         for step in range(1, 97):
             horizon_minutes = step * 30
             hour = min(48, horizon_minutes // 60)
-            weather_point = (
-                weather_by_hour.get(hour)
-                or weather_by_hour.get(hour - 1)
-                or weather_points[-1]
-            )
-
+            weather_point = weather_by_hour.get(hour) or weather_by_hour.get(hour - 1) or weather_points[-1]
             dt_hours = 0.5
             outside = weather_point.outdoor_temperature_c
 
-            fast_alpha = 1.0 - exp(
-                -dt_hours / max(
-                    0.1,
-                    parameters.fast_time_constant_hours,
-                )
-            )
-            slow_alpha = 1.0 - exp(
-                -dt_hours / max(
-                    0.1,
-                    parameters.slow_time_constant_hours,
-                )
-            )
+            fast_alpha = 1.0 - exp(-dt_hours / max(0.1, parameters.fast_time_constant_hours))
+            slow_alpha = 1.0 - exp(-dt_hours / max(0.1, parameters.slow_time_constant_hours))
 
             cloud_factor = (
-                1.0
-                - max(
-                    0.0,
-                    min(
-                        100.0,
-                        weather_point.cloud_cover_pct,
-                    ),
-                )
-                / 100.0
+                1.0 - max(0.0, min(100.0, weather_point.cloud_cover_pct)) / 100.0
                 if weather_point.cloud_cover_pct is not None
                 else 0.5
             )
             radiation_factor = (
-                max(
-                    0.0,
-                    min(
-                        1.0,
-                        weather_point.solar_radiation_w_m2 / 800.0,
-                    ),
-                )
+                max(0.0, min(1.0, weather_point.solar_radiation_w_m2 / 800.0))
                 if weather_point.solar_radiation_w_m2 is not None
                 else cloud_factor
             )
-            solar_gain = (
-                parameters.solar_gain_c_per_hour_at_full_sun
-                * radiation_factor
-            )
-
+            solar_gain = parameters.solar_gain_c_per_hour_at_full_sun * radiation_factor
             cooling_gain = {
                 "BASELINE": 0.0,
                 "SOFT_COOLING": parameters.soft_cooling_c_per_hour,
                 "FULL_COOLING": parameters.full_cooling_c_per_hour,
             }[scenario]
 
-            # Slow thermal mass follows outside and exchanges with room air.
-            mass += slow_alpha * (
-                (outside - mass) * 0.55
-                + (air - mass) * parameters.mass_coupling
-            )
-
-            # Fast air node reacts to outside, mass, solar gains and cooling.
-            air += fast_alpha * (
-                (outside - air) * 0.35
-                + (mass - air) * parameters.mass_coupling
-            )
+            mass += slow_alpha * ((outside - mass) * 0.55 + (air - mass) * parameters.mass_coupling)
+            air += fast_alpha * ((outside - air) * 0.35 + (mass - air) * parameters.mass_coupling)
             air += (solar_gain - cooling_gain) * dt_hours
 
             if horizon_minutes in self.HORIZONS_MINUTES:
                 horizon_factor = horizon_minutes / 2880.0
-                confidence = max(
-                    0.20,
-                    parameters.model_confidence
-                    * (1.0 - 0.52 * horizon_factor),
-                )
-                uncertainty = (
-                    0.18
-                    + 1.45 * horizon_factor
-                    + (1.0 - confidence) * 0.35
-                )
-
+                confidence = max(0.20, parameters.model_confidence * (1.0 - 0.52 * horizon_factor))
+                uncertainty = 0.18 + 1.45 * horizon_factor + (1.0 - confidence) * 0.35
                 points.append(
                     TrajectoryPoint(
                         horizon_minutes=horizon_minutes,
@@ -442,7 +316,4 @@ class WeatherInertiaPredictor:
                     )
                 )
 
-        return ThermalTrajectory(
-            scenario=scenario,
-            points=tuple(points),
-        )
+        return ThermalTrajectory(scenario=scenario, points=tuple(points))
