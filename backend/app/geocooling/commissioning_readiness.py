@@ -23,32 +23,42 @@ def build_commissioning_readiness(
 ) -> dict[str, Any]:
     """Return the next commissioning gate without touching hardware.
 
-    The gate is deliberately conservative. Observed candidates are never treated
-    as identified sensors, and telemetry readiness never implies field
-    certification.
+    Only roles marked required by telemetry health can block commissioning.
+    Optional capabilities (for example a non-installed flow meter) are surfaced
+    but never turned into fictitious telemetry requirements.
     """
 
     upstream_state = str(telemetry_health.get("upstream_state") or "UPSTREAM_EMPTY")
     roles = telemetry_health.get("roles") or {}
-    configured_role_count = int(telemetry_health.get("configured_role_count") or 0)
-    role_count = len(roles) or 6
-    all_roles_ready = bool(telemetry_health.get("ready"))
+
+    required_role_count = int(
+        telemetry_health.get("required_role_count")
+        or len(roles)
+        or 6
+    )
+    configured_required_role_count = int(
+        telemetry_health.get("configured_required_role_count")
+        if telemetry_health.get("configured_required_role_count") is not None
+        else telemetry_health.get("configured_role_count") or 0
+    )
+    all_required_roles_ready = bool(telemetry_health.get("ready"))
+    optional_roles = list(telemetry_health.get("optional_roles") or [])
 
     if upstream_state != "OBSERVED":
         state = "UPSTREAM_NOT_READY"
-        next_action = "Restore WT32/ESPHome telemetry publication to MQTT."
+        next_action = "Restore the installed GeoCooling telemetry sources."
     elif not physical_identification_confirmed:
         state = "IDENTIFICATION_REQUIRED"
-        next_action = "Physically confirm the identity of each observed hydraulic sensor."
-    elif configured_role_count < role_count:
+        next_action = "Physically confirm the identity of each required hydraulic sensor."
+    elif configured_required_role_count < required_role_count:
         state = "MAPPING_INCOMPLETE"
-        next_action = "Configure the six GEOCOOLING_*_SENSOR mappings from confirmed identities."
-    elif not all_roles_ready:
+        next_action = "Configure every required GEOCOOLING telemetry role from confirmed identities."
+    elif not all_required_roles_ready:
         state = "MAPPING_INCOMPLETE"
-        next_action = "Resolve absent, incorrect or stale mapped telemetry until all six roles are OK."
+        next_action = "Resolve absent, incorrect or stale required telemetry until all required roles are ready."
     elif not field_certification_confirmed:
         state = "FIELD_CERTIFICATION_REQUIRED"
-        next_action = "Perform the physical EV and M11/M13 field certification with hardware still controlled manually."
+        next_action = "Perform the physical EV and M11/M13 field certification with hardware controlled manually."
     else:
         state = "READY_FOR_RELEASE"
         next_action = "Commissioning gates are complete; release preparation may proceed."
@@ -57,12 +67,13 @@ def build_commissioning_readiness(
         "component": "geocooling_commissioning_readiness",
         "state": state,
         "ready_for_release": state == "READY_FOR_RELEASE",
-        "telemetry_ready": all_roles_ready,
+        "telemetry_ready": all_required_roles_ready,
         "upstream_state": upstream_state,
         "physical_identification_confirmed": physical_identification_confirmed,
         "field_certification_confirmed": field_certification_confirmed,
-        "configured_role_count": configured_role_count,
-        "role_count": role_count,
+        "configured_required_role_count": configured_required_role_count,
+        "required_role_count": required_role_count,
+        "optional_roles": optional_roles,
         "next_action": next_action,
         "read_only": True,
         "hardware_touched": False,
