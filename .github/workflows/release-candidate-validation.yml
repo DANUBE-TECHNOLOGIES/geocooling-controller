@@ -60,6 +60,7 @@ jobs:
             tests/test_telemetry_health_service.py \
             tests/test_commissioning_readiness.py \
             tests/test_hardware_activation_policy.py \
+            tests/test_commissioning_test_gate.py \
             tests/test_hardware_manual_control_commissioning_gate.py \
             tests/test_safe_home_assistant_bridge.py
 
