@@ -93,6 +93,24 @@ jobs:
           python -m py_compile ../tools/rc3/analyze_precooling_journal.py
           python -m py_compile ../tools/rc3/calibrate_precooling_journal.py
 
+      - name: Compose configuration
+        env:
+          POSTGRES_DB: sbc
+          POSTGRES_USER: sbc
+          POSTGRES_PASSWORD: ci
+          TZ: Europe/Paris
+          SBC_API_PORT: '8000'
+          GEOCOOLING_UI_PORT: '3000'
+          ADMINER_PORT: '8081'
+          MQTT_HOST: localhost
+          MQTT_PORT: '1883'
+          MQTT_USERNAME: ci
+          MQTT_PASSWORD: ci
+          MQTT_TOPICS: 'geocooling/#'
+          LOG_LEVEL: INFO
+          ESPHOME_BRIDGE_NOISE_PSK: ci
+        run: docker compose -f ../compose.yaml config -q
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
@@ -117,3 +135,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build production container
+        run: docker build --build-arg NEXT_PUBLIC_GEOCOOLING_API_URL=/api -t geocooling-ui-ci .
