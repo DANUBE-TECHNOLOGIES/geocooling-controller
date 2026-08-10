@@ -88,6 +88,7 @@ jobs:
           bash -n ../scripts/rc3/stop-precooling-journal.sh
           bash -n ../scripts/rc3/analyze-precooling-journal.sh
           bash -n ../scripts/rc3/calibrate-precooling-journal.sh
+          bash -n ../scripts/release/geocooling-final-readiness-audit.sh
           python -m py_compile ../tools/rc3/precooling_advisory_collector.py
           python -m py_compile ../tools/rc3/analyze_precooling_journal.py
           python -m py_compile ../tools/rc3/calibrate_precooling_journal.py
