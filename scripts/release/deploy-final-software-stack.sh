@@ -20,11 +20,16 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-read_flag() {
+read_env_value() {
   local name="$1"
+  local fallback="${2:-}"
   local value
-  value="$(grep -E "^${name}=" .env | tail -1 | cut -d= -f2- | tr '[:upper:]' '[:lower:]' | xargs || true)"
-  printf '%s' "$value"
+  value="$(grep -E "^${name}=" .env | tail -1 | cut -d= -f2- | xargs || true)"
+  printf '%s' "${value:-$fallback}"
+}
+
+read_flag() {
+  read_env_value "$1" '' | tr '[:upper:]' '[:lower:]'
 }
 
 for flag in \
@@ -40,6 +45,12 @@ do
     exit 1
   fi
 done
+
+api_port="$(read_env_value SBC_API_PORT 8000)"
+ui_port="$(read_env_value GEOCOOLING_UI_PORT 3000)"
+
+echo "SBC_API_PORT=$api_port"
+echo "GEOCOOLING_UI_PORT=$ui_port"
 
 echo
 echo '===== CONFIGURATION COMPOSE ====='
@@ -57,7 +68,7 @@ echo
 echo '===== ATTENTE BACKEND ====='
 backend_ready=false
 for i in $(seq 1 90); do
-  if curl -fsS http://127.0.0.1:${SBC_API_PORT:-8000}/health/live >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${api_port}/health/live" >/dev/null 2>&1; then
     backend_ready=true
     echo "backend=READY après ${i}s"
     break
@@ -72,7 +83,6 @@ fi
 
 echo
 echo '===== ATTENTE FRONTEND ====='
-ui_port="${GEOCOOLING_UI_PORT:-3000}"
 frontend_ready=false
 for i in $(seq 1 90); do
   if curl -fsS "http://127.0.0.1:${ui_port}/geocooling/readiness" >/dev/null 2>&1; then
@@ -94,7 +104,8 @@ docker compose ps backend frontend esphome-bridge
 
 echo
 echo '===== FINAL READINESS ====='
-bash scripts/release/geocooling-final-readiness-audit.sh
+GEOCOOLING_INTERNAL_API_BASE_URL="http://127.0.0.1:${api_port}" \
+  bash scripts/release/geocooling-final-readiness-audit.sh
 
 echo
 echo '===== JOURNAL PRECOOLING ====='
