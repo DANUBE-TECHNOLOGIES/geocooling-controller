@@ -1,3 +1,5 @@
+import pytest
+
 from app.geocooling.rc3.precooling_advisor import PreCoolingAdvisor
 
 
@@ -98,7 +100,7 @@ def test_current_overheating_is_not_reported_as_future_precooling() -> None:
     assert result["recommendation"]["lead_minutes"] == 0
     assert result["recommendation"]["start_horizon_minutes"] == 0
     assert result["recommendation"]["evaluation_horizon_minutes"] == 360
-    assert result["recommendation"]["predicted_avoided_temperature_c"] == 2.7
+    assert result["recommendation"]["predicted_avoided_temperature_c"] == pytest.approx(2.7)
     assert result["safety"]["promotion_to_controller_allowed"] is False
 
 
