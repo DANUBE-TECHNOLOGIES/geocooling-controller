@@ -9,6 +9,9 @@ from app.geocooling.brain_v2.integration.safe_home_assistant_bridge import (
 from app.geocooling.commissioning_readiness_service import (
     CommissioningReadinessService,
 )
+from app.geocooling.hardware_activation_policy import (
+    build_hardware_activation_policy,
+)
 from app.geocooling.telemetry_health_service import TelemetryHealthService
 
 
@@ -38,6 +41,15 @@ def get_home_assistant_telemetry_health() -> dict:
 @router.get("/commissioning-readiness")
 def get_commissioning_readiness() -> dict:
     return CommissioningReadinessService().status()
+
+
+@router.get("/hardware-activation-policy")
+def get_hardware_activation_policy() -> dict:
+    readiness = CommissioningReadinessService().status()
+    return {
+        **build_hardware_activation_policy(readiness),
+        "readiness": readiness,
+    }
 
 
 @router.get(
