@@ -43,6 +43,7 @@ jobs:
             tests/test_rc3_live_shadow.py \
             tests/test_weather_inertia_predictor.py \
             tests/test_weather_inertia_live_integration.py \
+            tests/test_precooling_advisor.py \
             tests/test_predictor_calibration.py \
             tests/test_prediction_validation.py \
             tests/test_validation_calibration_bridge.py
