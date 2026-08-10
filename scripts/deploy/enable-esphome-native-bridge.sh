@@ -91,38 +91,93 @@ echo "===== SERVICES ====="
 docker compose ps backend esphome-bridge
 
 echo
+echo "===== BACKEND READINESS ====="
+SBC_PORT="$(sed -nE 's/^SBC_API_PORT=(.*)$/\1/p' "$ENV_FILE" | tail -n1)"
+SBC_PORT="${SBC_PORT:-8000}"
+
+BACKEND_READY=false
+for attempt in $(seq 1 30); do
+  if curl -fsS --max-time 3 "http://127.0.0.1:${SBC_PORT}/health/live" >/dev/null 2>&1; then
+    BACKEND_READY=true
+    echo "Backend READY après ${attempt} tentative(s)."
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$BACKEND_READY" != "true" ]]; then
+  echo "ERREUR: backend non prêt après 60 secondes." >&2
+  docker compose ps backend esphome-bridge || true
+  docker compose logs --tail=120 backend esphome-bridge 2>&1 \
+    | sed -E 's/(noise_psk|NOISE_PSK|api_key)[^ ]*/\1=***MASQUE***/Ig' || true
+  exit 1
+fi
+
+echo
 echo "===== BRIDGE LOGS (clé jamais affichée) ====="
-docker compose logs --tail=60 esphome-bridge 2>&1 \
+docker compose logs --tail=80 esphome-bridge 2>&1 \
   | sed -E 's/(noise_psk|NOISE_PSK|api_key)[^ ]*/\1=***MASQUE***/Ig'
 
 echo
 echo "===== CANONICAL SENSOR VALUES ====="
-sleep 12
-SBC_PORT="$(sed -nE 's/^SBC_API_PORT=(.*)$/\1/p' "$ENV_FILE" | tail -n1)"
-SBC_PORT="${SBC_PORT:-8000}"
+SENSORS_OK=false
+for attempt in $(seq 1 30); do
+  TMP="$(mktemp)"
+  if curl -fsS --max-time 5 "http://127.0.0.1:${SBC_PORT}/sensors/latest" -o "$TMP" 2>/dev/null; then
+    COUNT="$(python3 - "$TMP" <<'PY'
+import json
+import sys
+from pathlib import Path
 
-curl -fsS "http://127.0.0.1:${SBC_PORT}/sensors/latest" \
-  | python3 -c '
-import json, sys
-rows = json.load(sys.stdin)
+rows = json.loads(Path(sys.argv[1]).read_text())
 wanted = {
     "gc_source_inlet",
     "gc_source_outlet",
     "gc_floor_supply",
     "gc_floor_return",
 }
-found = 0
-for row in rows:
-    if row.get("sensor_name") in wanted:
-        found += 1
-        print(
-            f"{row.get('"'"'sensor_name'"'"')}: "
-            f"{row.get('"'"'value'"'"')} {row.get('"'"'unit'"'"')}  "
-            f"{row.get('"'"'measured_at'"'"')}"
-        )
-if found != 4:
-    raise SystemExit(f"ERREUR: {found}/4 sondes hydrauliques canoniques visibles")
-'
+seen = {
+    row.get("sensor_name")
+    for row in rows
+    if isinstance(row, dict) and row.get("sensor_name") in wanted
+}
+print(len(seen))
+PY
+)"
+    if [[ "$COUNT" == "4" ]]; then
+      python3 - "$TMP" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+rows = json.loads(Path(sys.argv[1]).read_text())
+wanted = [
+    "gc_source_inlet",
+    "gc_source_outlet",
+    "gc_floor_supply",
+    "gc_floor_return",
+]
+by_name = {row.get("sensor_name"): row for row in rows if isinstance(row, dict)}
+for name in wanted:
+    row = by_name[name]
+    print(f"{name}: {row.get('value')} {row.get('unit')}  {row.get('measured_at')}")
+PY
+      SENSORS_OK=true
+      rm -f "$TMP"
+      break
+    fi
+  fi
+  rm -f "$TMP"
+  sleep 2
+done
+
+if [[ "$SENSORS_OK" != "true" ]]; then
+  echo "ERREUR: les 4 sondes hydrauliques canoniques ne sont pas visibles après 60 secondes." >&2
+  echo "Derniers logs bridge:" >&2
+  docker compose logs --tail=160 esphome-bridge 2>&1 \
+    | sed -E 's/(noise_psk|NOISE_PSK|api_key)[^ ]*/\1=***MASQUE***/Ig' || true
+  exit 1
+fi
 
 echo
 echo "Bridge ESPHome déployé en lecture seule."
