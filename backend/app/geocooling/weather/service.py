@@ -103,7 +103,7 @@ class WeatherService:
     Service météo Open-Meteo avec cache mémoire.
 
     Le service ne pilote jamais le matériel. Il expose uniquement des
-    observations et des prévisions utilisables ultérieurement par le Brain.
+    observations et des prévisions utilisables par les moteurs prédictifs.
     """
 
     def __init__(self) -> None:
@@ -113,98 +113,71 @@ class WeatherService:
             minimum=2.0,
             maximum=60.0,
         )
-
         self._cache_seconds = self._read_float(
             "GEOCOOLING_WEATHER_CACHE_SECONDS",
             900.0,
             minimum=30.0,
             maximum=3600.0,
         )
-
         self._forecast_hours = self._read_int(
             "GEOCOOLING_WEATHER_FORECAST_HOURS",
             48,
             minimum=6,
             maximum=168,
         )
-
         self._forecast_days = self._read_int(
             "GEOCOOLING_WEATHER_FORECAST_DAYS",
             7,
             minimum=1,
             maximum=16,
         )
-
         self._timezone = (
             os.getenv("GEOCOOLING_WEATHER_TIMEZONE", DEFAULT_TIMEZONE).strip()
             or DEFAULT_TIMEZONE
         )
-
         self._lock = threading.RLock()
         self._weather_cache: CacheEntry | None = None
         self._location_cache: WeatherLocation | None = None
 
     @staticmethod
-    def _read_float(
-        name: str,
-        default: float,
-        *,
-        minimum: float,
-        maximum: float,
-    ) -> float:
+    def _read_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
         raw = os.getenv(name)
-
         if raw is None or not raw.strip():
             return default
-
         try:
             value = float(raw)
         except ValueError as exc:
             raise WeatherConfigurationError(
                 f"{name} doit être un nombre, valeur reçue : {raw!r}"
             ) from exc
-
         if value < minimum or value > maximum:
             raise WeatherConfigurationError(
                 f"{name} doit être compris entre {minimum} et {maximum}"
             )
-
         return value
 
     @staticmethod
-    def _read_int(
-        name: str,
-        default: int,
-        *,
-        minimum: int,
-        maximum: int,
-    ) -> int:
+    def _read_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
         raw = os.getenv(name)
-
         if raw is None or not raw.strip():
             return default
-
         try:
             value = int(raw)
         except ValueError as exc:
             raise WeatherConfigurationError(
                 f"{name} doit être un entier, valeur reçue : {raw!r}"
             ) from exc
-
         if value < minimum or value > maximum:
             raise WeatherConfigurationError(
                 f"{name} doit être compris entre {minimum} et {maximum}"
             )
-
         return value
 
     @staticmethod
     def _optional_coordinate(name: str) -> float | None:
         raw = os.getenv(name)
-
         if raw is None or not raw.strip():
             return None
-
         try:
             return float(raw)
         except ValueError as exc:
@@ -212,14 +185,9 @@ class WeatherService:
                 f"{name} doit être une coordonnée numérique"
             ) from exc
 
-    def _request_json(
-        self,
-        base_url: str,
-        parameters: dict[str, Any],
-    ) -> dict[str, Any]:
+    def _request_json(self, base_url: str, parameters: dict[str, Any]) -> dict[str, Any]:
         query = urlencode(parameters, doseq=True)
         url = f"{base_url}?{query}"
-
         request = Request(
             url,
             headers={
@@ -228,7 +196,6 @@ class WeatherService:
             },
             method="GET",
         )
-
         try:
             with urlopen(request, timeout=self._timeout_seconds) as response:
                 status = getattr(response, "status", 200)
@@ -237,29 +204,20 @@ class WeatherService:
             raise WeatherProviderError(
                 f"Impossible de contacter Open-Meteo : {exc}"
             ) from exc
-
         if status < 200 or status >= 300:
             raise WeatherProviderError(
                 f"Open-Meteo a répondu avec le statut HTTP {status}"
             )
-
         try:
             payload = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise WeatherProviderError(
-                "Réponse JSON Open-Meteo invalide"
-            ) from exc
-
+            raise WeatherProviderError("Réponse JSON Open-Meteo invalide") from exc
         if not isinstance(payload, dict):
-            raise WeatherProviderError(
-                "Format de réponse Open-Meteo inattendu"
-            )
-
+            raise WeatherProviderError("Format de réponse Open-Meteo inattendu")
         if payload.get("error"):
             raise WeatherProviderError(
                 str(payload.get("reason") or "Erreur Open-Meteo")
             )
-
         return payload
 
     def _resolve_location_sync(self) -> WeatherLocation:
@@ -267,31 +225,18 @@ class WeatherService:
             if self._location_cache is not None:
                 return self._location_cache
 
-        latitude = self._optional_coordinate(
-            "GEOCOOLING_WEATHER_LATITUDE"
-        )
-        longitude = self._optional_coordinate(
-            "GEOCOOLING_WEATHER_LONGITUDE"
-        )
-
+        latitude = self._optional_coordinate("GEOCOOLING_WEATHER_LATITUDE")
+        longitude = self._optional_coordinate("GEOCOOLING_WEATHER_LONGITUDE")
         configured_name = (
             os.getenv("GEOCOOLING_WEATHER_LOCATION", DEFAULT_LOCATION).strip()
             or DEFAULT_LOCATION
         )
-
         configured_postal_code = (
-            os.getenv(
-                "GEOCOOLING_WEATHER_POSTAL_CODE",
-                DEFAULT_POSTAL_CODE,
-            ).strip()
+            os.getenv("GEOCOOLING_WEATHER_POSTAL_CODE", DEFAULT_POSTAL_CODE).strip()
             or DEFAULT_POSTAL_CODE
         )
-
         configured_country_code = (
-            os.getenv(
-                "GEOCOOLING_WEATHER_COUNTRY_CODE",
-                DEFAULT_COUNTRY_CODE,
-            ).strip()
+            os.getenv("GEOCOOLING_WEATHER_COUNTRY_CODE", DEFAULT_COUNTRY_CODE).strip()
             or DEFAULT_COUNTRY_CODE
         ).upper()
 
@@ -300,7 +245,6 @@ class WeatherService:
                 raise WeatherConfigurationError(
                     "Latitude et longitude doivent être renseignées ensemble"
                 )
-
             location = WeatherLocation(
                 latitude=latitude,
                 longitude=longitude,
@@ -309,24 +253,16 @@ class WeatherService:
                 country=configured_country_code,
                 timezone=self._timezone,
             )
-
             with self._lock:
                 self._location_cache = location
-
             return location
 
-        search_terms = [
-            configured_postal_code,
-            configured_name,
-        ]
-
+        search_terms = [configured_postal_code, configured_name]
         results: list[Any] = []
         successful_search_term: str | None = None
-
         for search_term in search_terms:
             if not search_term:
                 continue
-
             try:
                 payload = self._request_json(
                     OPEN_METEO_GEOCODING_URL,
@@ -339,14 +275,9 @@ class WeatherService:
                     },
                 )
             except WeatherProviderError:
-                LOGGER.warning(
-                    "Échec du géocodage Open-Meteo pour %s",
-                    search_term,
-                )
+                LOGGER.warning("Échec du géocodage Open-Meteo pour %s", search_term)
                 continue
-
             candidate_results = payload.get("results")
-
             if isinstance(candidate_results, list) and candidate_results:
                 results = candidate_results
                 successful_search_term = search_term
@@ -356,45 +287,29 @@ class WeatherService:
             raise WeatherConfigurationError(
                 "Localité météo introuvable avec les recherches "
                 f"{search_terms!r}. Configurez explicitement "
-                "GEOCOOLING_WEATHER_LATITUDE et "
-                "GEOCOOLING_WEATHER_LONGITUDE."
+                "GEOCOOLING_WEATHER_LATITUDE et GEOCOOLING_WEATHER_LONGITUDE."
             )
-
-        LOGGER.info(
-            "Géocodage météo résolu avec le terme %s",
-            successful_search_term,
-        )
+        LOGGER.info("Géocodage météo résolu avec le terme %s", successful_search_term)
 
         selected: dict[str, Any] | None = None
-
         for candidate in results:
             if not isinstance(candidate, dict):
                 continue
-
             candidate_postal_codes = candidate.get("postcodes") or []
-            candidate_country_code = str(
-                candidate.get("country_code") or ""
-            ).upper()
-
+            candidate_country_code = str(candidate.get("country_code") or "").upper()
             if (
                 configured_postal_code in candidate_postal_codes
                 and candidate_country_code == configured_country_code
             ):
                 selected = candidate
                 break
-
         if selected is None:
             for candidate in results:
                 if not isinstance(candidate, dict):
                     continue
-
-                if (
-                    str(candidate.get("country_code") or "").upper()
-                    == configured_country_code
-                ):
+                if str(candidate.get("country_code") or "").upper() == configured_country_code:
                     selected = candidate
                     break
-
         if selected is None:
             selected = results[0]
 
@@ -411,135 +326,87 @@ class WeatherService:
             longitude=resolved_longitude,
             name=str(selected.get("name") or configured_name),
             postal_code=configured_postal_code,
-            country=str(
-                selected.get("country") or configured_country_code
-            ),
+            country=str(selected.get("country") or configured_country_code),
             timezone=str(selected.get("timezone") or self._timezone),
         )
-
         with self._lock:
             self._location_cache = location
-
         return location
 
     @staticmethod
-    def _hourly_rows(
-        hourly: Any,
-    ) -> list[dict[str, Any]]:
+    def _hourly_rows(hourly: Any) -> list[dict[str, Any]]:
         if not isinstance(hourly, dict):
             return []
-
         times = hourly.get("time")
-
         if not isinstance(times, list):
             return []
-
         variables = {
             key: value
             for key, value in hourly.items()
             if key != "time" and isinstance(value, list)
         }
-
         rows: list[dict[str, Any]] = []
-
         for index, timestamp in enumerate(times):
             row: dict[str, Any] = {"time": timestamp}
-
             for variable, values in variables.items():
-                row[variable] = (
-                    values[index] if index < len(values) else None
-                )
-
+                row[variable] = values[index] if index < len(values) else None
             rows.append(row)
-
         return rows
 
     @staticmethod
-    def _daily_rows(
-        daily: Any,
-    ) -> list[dict[str, Any]]:
+    def _daily_rows(daily: Any) -> list[dict[str, Any]]:
         if not isinstance(daily, dict):
             return []
-
         times = daily.get("time")
-
         if not isinstance(times, list):
             return []
-
         variables = {
             key: value
             for key, value in daily.items()
             if key != "time" and isinstance(value, list)
         }
-
         rows: list[dict[str, Any]] = []
-
         for index, date in enumerate(times):
             row: dict[str, Any] = {"date": date}
-
             for variable, values in variables.items():
-                row[variable] = (
-                    values[index] if index < len(values) else None
-                )
-
+                row[variable] = values[index] if index < len(values) else None
             rows.append(row)
-
         return rows
 
     @staticmethod
-    def _derive_summary(
-        hourly_rows: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+    def _derive_summary(hourly_rows: list[dict[str, Any]]) -> dict[str, Any]:
         first_24_hours = hourly_rows[:24]
-
         temperatures = [
             row.get("temperature_2m")
             for row in first_24_hours
             if isinstance(row.get("temperature_2m"), (int, float))
         ]
-
         humidities = [
             row.get("relative_humidity_2m")
             for row in first_24_hours
             if isinstance(row.get("relative_humidity_2m"), (int, float))
         ]
-
         solar_values = [
             row.get("shortwave_radiation")
             for row in first_24_hours
             if isinstance(row.get("shortwave_radiation"), (int, float))
         ]
-
         precipitation_probabilities = [
             row.get("precipitation_probability")
             for row in first_24_hours
-            if isinstance(
-                row.get("precipitation_probability"),
-                (int, float),
-            )
+            if isinstance(row.get("precipitation_probability"), (int, float))
         ]
-
         return {
             "horizon_hours": len(first_24_hours),
-            "temperature_min_24h": (
-                min(temperatures) if temperatures else None
-            ),
-            "temperature_max_24h": (
-                max(temperatures) if temperatures else None
-            ),
+            "temperature_min_24h": min(temperatures) if temperatures else None,
+            "temperature_max_24h": max(temperatures) if temperatures else None,
             "temperature_average_24h": (
-                sum(temperatures) / len(temperatures)
-                if temperatures
-                else None
+                sum(temperatures) / len(temperatures) if temperatures else None
             ),
             "humidity_average_24h": (
-                sum(humidities) / len(humidities)
-                if humidities
-                else None
+                sum(humidities) / len(humidities) if humidities else None
             ),
-            "solar_radiation_peak_24h": (
-                max(solar_values) if solar_values else None
-            ),
+            "solar_radiation_peak_24h": max(solar_values) if solar_values else None,
             "precipitation_probability_max_24h": (
                 max(precipitation_probabilities)
                 if precipitation_probabilities
@@ -549,7 +416,6 @@ class WeatherService:
 
     def _fetch_weather_sync(self) -> dict[str, Any]:
         location = self._resolve_location_sync()
-
         payload = self._request_json(
             OPEN_METEO_FORECAST_URL,
             {
@@ -566,11 +432,9 @@ class WeatherService:
                 "precipitation_unit": "mm",
             },
         )
-
         hourly_rows = self._hourly_rows(payload.get("hourly"))
         daily_rows = self._daily_rows(payload.get("daily"))
-
-        normalized = {
+        return {
             "provider": "open-meteo",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "location": {
@@ -591,6 +455,7 @@ class WeatherService:
             "daily_units": payload.get("daily_units") or {},
             "summary": self._derive_summary(hourly_rows),
             "forecast_hours": len(hourly_rows),
+            "forecast_span_hours": max(0, len(hourly_rows) - 1),
             "forecast_days": len(daily_rows),
             "cache": {
                 "ttl_seconds": self._cache_seconds,
@@ -599,21 +464,12 @@ class WeatherService:
             },
         }
 
-        return normalized
-
-    def get_weather_sync(
-        self,
-        *,
-        force_refresh: bool = False,
-    ) -> dict[str, Any]:
+    def get_weather_sync(self, *, force_refresh: bool = False) -> dict[str, Any]:
         now = time.monotonic()
-
         with self._lock:
             cached = self._weather_cache
-
             if cached is not None and not force_refresh:
                 age = now - cached.created_monotonic
-
                 if age < self._cache_seconds:
                     payload = dict(cached.payload)
                     payload["cache"] = {
@@ -622,22 +478,15 @@ class WeatherService:
                         "age_seconds": round(age, 3),
                     }
                     return payload
-
         payload = self._fetch_weather_sync()
-
         with self._lock:
             self._weather_cache = CacheEntry(
                 created_monotonic=time.monotonic(),
                 payload=payload,
             )
-
         return payload
 
-    async def get_weather(
-        self,
-        *,
-        force_refresh: bool = False,
-    ) -> dict[str, Any]:
+    async def get_weather(self, *, force_refresh: bool = False) -> dict[str, Any]:
         return await asyncio.to_thread(
             self.get_weather_sync,
             force_refresh=force_refresh,
@@ -647,26 +496,22 @@ class WeatherService:
         with self._lock:
             cache = self._weather_cache
             location = self._location_cache
-
         cache_age = (
             time.monotonic() - cache.created_monotonic
             if cache is not None
             else None
         )
-
         return {
             "service": "weather-intelligence",
             "provider": "open-meteo",
             "configured": True,
             "read_only": True,
-            "brain_connected": False,
+            "brain_connected": True,
+            "predictor_route": "/geocooling/rc3/weather-inertia/live",
+            "weather_route": "/geocooling/weather",
             "cache": {
                 "available": cache is not None,
-                "age_seconds": (
-                    round(cache_age, 3)
-                    if cache_age is not None
-                    else None
-                ),
+                "age_seconds": round(cache_age, 3) if cache_age is not None else None,
                 "ttl_seconds": self._cache_seconds,
             },
             "location": (
@@ -682,6 +527,7 @@ class WeatherService:
                 else None
             ),
             "forecast_hours": self._forecast_hours,
+            "forecast_span_hours": max(0, self._forecast_hours - 1),
             "forecast_days": self._forecast_days,
         }
 
