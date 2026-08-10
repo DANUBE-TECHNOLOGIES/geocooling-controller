@@ -109,7 +109,10 @@ jobs:
           MQTT_TOPICS: 'geocooling/#'
           LOG_LEVEL: INFO
           ESPHOME_BRIDGE_NOISE_PSK: ci
-        run: docker compose -f ../compose.yaml config -q
+        run: |
+          cp ../.env.example ../.env
+          trap 'rm -f ../.env' EXIT
+          docker compose -f ../compose.yaml config -q
 
   frontend-build:
     runs-on: ubuntu-latest
