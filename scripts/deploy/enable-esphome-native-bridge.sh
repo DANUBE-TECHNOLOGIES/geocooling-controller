@@ -92,21 +92,39 @@ docker compose ps backend esphome-bridge
 
 echo
 echo "===== BRIDGE LOGS (clé jamais affichée) ====="
-docker compose logs --tail=60 esphome-bridge 2>&1 | sed -E 's/(noise_psk|NOISE_PSK|api_key)[^ ]*/\1=***MASQUE***/Ig'
+docker compose logs --tail=60 esphome-bridge 2>&1 \
+  | sed -E 's/(noise_psk|NOISE_PSK|api_key)[^ ]*/\1=***MASQUE***/Ig'
 
 echo
 echo "===== CANONICAL SENSOR VALUES ====="
 sleep 12
-curl -fsS http://127.0.0.1:${SBC_API_PORT:-8000}/sensors/latest \
+SBC_PORT="$(sed -nE 's/^SBC_API_PORT=(.*)$/\1/p' "$ENV_FILE" | tail -n1)"
+SBC_PORT="${SBC_PORT:-8000}"
+
+curl -fsS "http://127.0.0.1:${SBC_PORT}/sensors/latest" \
   | python3 -c '
-import json,sys
-rows=json.load(sys.stdin)
-wanted={"gc_source_inlet","gc_source_outlet","gc_floor_supply","gc_floor_return"}
+import json, sys
+rows = json.load(sys.stdin)
+wanted = {
+    "gc_source_inlet",
+    "gc_source_outlet",
+    "gc_floor_supply",
+    "gc_floor_return",
+}
+found = 0
 for row in rows:
     if row.get("sensor_name") in wanted:
-        print(f"{row.get(chr(115)+chr(101)+chr(110)+chr(115)+chr(111)+chr(114)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101))}: {row.get(chr(118)+chr(97)+chr(108)+chr(117)+chr(101))} {row.get(chr(117)+chr(110)+chr(105)+chr(116))}  {row.get(chr(109)+chr(101)+chr(97)+chr(115)+chr(117)+chr(114)+chr(101)+chr(100)+chr(95)+chr(97)+chr(116))}")
+        found += 1
+        print(
+            f"{row.get('"'"'sensor_name'"'"')}: "
+            f"{row.get('"'"'value'"'"')} {row.get('"'"'unit'"'"')}  "
+            f"{row.get('"'"'measured_at'"'"')}"
+        )
+if found != 4:
+    raise SystemExit(f"ERREUR: {found}/4 sondes hydrauliques canoniques visibles")
 '
 
 echo
 echo "Bridge ESPHome déployé en lecture seule."
+echo "4/4 températures hydrauliques visibles dans /sensors/latest."
 echo "Aucun flag d'armement/certification n'a été activé."
