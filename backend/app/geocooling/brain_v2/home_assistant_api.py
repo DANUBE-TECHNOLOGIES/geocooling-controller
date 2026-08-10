@@ -12,6 +12,7 @@ from app.geocooling.commissioning_readiness_service import (
 from app.geocooling.hardware_activation_policy import (
     build_hardware_activation_policy,
 )
+from app.geocooling.release_readiness_service import ReleaseReadinessService
 from app.geocooling.telemetry_health_service import TelemetryHealthService
 
 
@@ -50,6 +51,11 @@ def get_hardware_activation_policy() -> dict:
         **build_hardware_activation_policy(readiness),
         "readiness": readiness,
     }
+
+
+@router.get("/release-readiness")
+def get_release_readiness() -> dict:
+    return ReleaseReadinessService().status()
 
 
 @router.get(
